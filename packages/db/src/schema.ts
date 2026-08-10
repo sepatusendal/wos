@@ -164,3 +164,17 @@ export const habitLogs = sqliteTable('habit_logs', {
   done: integer('done', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull(),
 })
+
+export const notes = sqliteTable('notes', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  title: text('title').notNull(),
+  content: text('content').notNull().default(''),
+  tags: text('tags').notNull().default('[]'),
+  date: text('date').notNull(),
+  pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+  linkedTodoId: text('linked_todo_id'),
+  linkedTransactionId: text('linked_transaction_id'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+})

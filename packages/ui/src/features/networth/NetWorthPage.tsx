@@ -102,7 +102,7 @@ export default function NetWorthPage() {
           <h3 className="mb-3">Riwayat</h3>
           <div className="flex flex-col gap-2.5">
             {entries.slice(1, 13).map((e, i) => {
-              const prev = entries[i + 1]
+              const prev = entries[i + 2]
               const change = prev ? e.netWorth - prev.netWorth : 0
               return (
                 <div key={e.id} className="nb-list-item">

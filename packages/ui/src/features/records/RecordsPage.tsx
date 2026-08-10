@@ -192,7 +192,7 @@ export default function RecordsPage() {
             const dayName = DAY_NAMES[d.getDay()]!
             const targetDays: string[] =
               typeof habit.targetDays === 'string'
-                ? (JSON.parse(habit.targetDays as string) as string[])
+                ? (((() => { try { return JSON.parse(habit.targetDays as string) as string[] } catch { return [] } })()))
                 : (habit.targetDays ?? [])
             if (!targetDays.includes(dayName)) {
               d.setDate(d.getDate() - 1)

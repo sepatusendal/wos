@@ -20,7 +20,8 @@ const tables: Record<string, string[]> = {
   recurring_transactions: ['id', 'user_id', 'name', 'type', 'amount', 'category', 'frequency', 'next_date', 'active', 'created_at'],
   subscriptions: ['id', 'user_id', 'name', 'category', 'amount', 'frequency', 'next_billing', 'icon', 'active', 'notes', 'created_at'],
   habits: ['id', 'user_id', 'name', 'emoji', 'frequency', 'target_days', 'color', 'active', 'created_at'],
-  habit_logs: ['id', 'habit_id', 'date', 'done', 'created_at'],
+  habit_logs: ['id', 'habit_id', 'user_id', 'date', 'done', 'created_at'],
+  notes: ['id', 'user_id', 'title', 'content', 'tags', 'date', 'pinned', 'linked_todo_id', 'linked_transaction_id', 'created_at', 'updated_at'],
 }
 
 const quote = (c: string) => `"${c}"`
@@ -214,6 +215,21 @@ async function ensureSchema() {
       date TEXT NOT NULL,
       done INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
+    )
+  `)
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS notes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      title TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      date TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      linked_todo_id TEXT,
+      linked_transaction_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )
   `)
 }

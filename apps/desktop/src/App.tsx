@@ -201,8 +201,17 @@ export default function App() {
         `)
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS habit_logs (
-            id TEXT PRIMARY KEY, habit_id TEXT NOT NULL,
+            id TEXT PRIMARY KEY, habit_id TEXT NOT NULL, user_id TEXT NOT NULL,
             date TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+          )
+        `)
+        await tauriDb.execute(`
+          CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]',
+            date TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0,
+            linked_todo_id TEXT, linked_transaction_id TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
           )
         `)
 

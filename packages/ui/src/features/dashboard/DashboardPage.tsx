@@ -506,7 +506,7 @@ export default function DashboardPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {savingsGoals.slice(0, 5).map((g) => {
-                const pct = Math.min(Math.round((g.savedAmount / g.targetAmount) * 100), 100)
+                const pct = Math.min(g.targetAmount > 0 ? Math.round((g.savedAmount / g.targetAmount) * 100) : 0, 100)
                 return (
                   <div key={g.id}>
                     <div className="flex justify-between text-xs font-bold mb-1">

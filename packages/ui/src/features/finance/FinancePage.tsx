@@ -185,9 +185,10 @@ export default function FinancePage() {
   const activeFilterCount = [searchQuery, filterAccount, filterCategory, monthFilter].filter(Boolean).length + (filter !== 'all' ? 1 : 0)
 
   const budgetSpending = useMemo(() => {
+    const thisMonth = todayStr().slice(0, 7)
     return budgets.map((b) => {
-      const spent = transactions.filter((t) => t.type === 'expense' && t.category === b.category).reduce((s, t) => s + t.amount, 0)
-      return { ...b, spent, pct: Math.min(Math.round((spent / b.limit) * 100), 100) }
+      const spent = transactions.filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(thisMonth)).reduce((s, t) => s + t.amount, 0)
+      return { ...b, spent, pct: b.limit > 0 ? Math.min(Math.round((spent / b.limit) * 100), 100) : 0 }
     })
   }, [budgets, transactions])
 
@@ -221,7 +222,7 @@ export default function FinancePage() {
 
       // Effective budget = base limit + rollover
       const effectiveLimit = b.limit + (budgetRollover[b.category] || 0)
-      const pct = Math.min(Math.round((spentThisMonth / effectiveLimit) * 100), 100)
+      const pct = Math.min(effectiveLimit > 0 ? Math.round((spentThisMonth / effectiveLimit) * 100) : 0, 100)
       const barPct = Math.min(pct, 100)
 
       // Overspend analysis: check last 3 months

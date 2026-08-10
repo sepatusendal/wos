@@ -101,7 +101,7 @@ export default function WealthPage() {
           <NeubruCard key={typeKey}>
             <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5"><NeubruTag label={typeKey} color={TYPE_COLORS[typeKey] || 'yellow'} /></div>
             <div className="font-mono text-lg font-extrabold">{formatCurrency(val)}</div>
-            <div className="text-xs text-nb-fg-muted mt-1 font-medium">{((val / totalValue) * 100).toFixed(1)}%</div>
+            <div className="text-xs text-nb-fg-muted mt-1 font-medium">{totalValue > 0 ? ((val / totalValue) * 100).toFixed(1) : "0.0"}%</div>
           </NeubruCard>
         ))}
       </div>

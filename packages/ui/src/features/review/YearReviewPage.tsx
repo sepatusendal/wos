@@ -552,7 +552,7 @@ export default function YearReviewPage() {
               {goalsData.list.map((g) => {
                 const pct = Math.min(
                   100,
-                  Math.round((g.savedAmount / g.targetAmount) * 100),
+                  Math.round((g.targetAmount > 0 ? g.savedAmount / g.targetAmount : 0) * 100),
                 )
                 const achieved = pct >= 100
                 return (
