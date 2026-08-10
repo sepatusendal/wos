@@ -4,6 +4,50 @@ import { generateId, isoNow } from '@wos/shared'
 import type { DatabaseAdapter } from '@wos/db'
 import { eq, desc } from '@wos/db'
 
+/** Preset icons for common subscription categories */
+export const SUBSCRIPTION_ICONS: Record<string, string> = {
+  streaming: '🎬',
+  music: '🎵',
+  cloud: '☁️',
+  productivity: '💼',
+  gaming: '🎮',
+  fitness: '💪',
+  food: '🍔',
+  transport: '🚗',
+  education: '📚',
+  finance: '💳',
+  hosting: '🖥️',
+  vpn: '🔒',
+  newsletter: '📧',
+  shopping: '🛒',
+  health: '🏥',
+  other: '📦',
+}
+
+/** Suggest an icon based on subscription name and category */
+export function suggestSubscriptionIcon(name: string, category: string): string {
+  const lower = `${name} ${category}`.toLowerCase()
+  const patterns: [RegExp, string][] = [
+    [/spotify|apple music|tidal|deezer|yt music/i, '🎵'],
+    [/netflix|disney|hbo|prime video|hulu|youtube/i, '🎬'],
+    [/icloud|dropbox|google (one|drive)|onedrive/i, '☁️'],
+    [/notion|linear|figma|slack|discord|zoom|teams/i, '💼'],
+    [/steam|nintendo|playstation|xbox|epic/i, '🎮'],
+    [/gym|strava|peloton|fitbit|whoop/i, '💪'],
+    [/gojek|grab|uber|uber eat|foodpanda/i, '🚗'],
+    [/vps|vpn|digitalocean|aws|vercel|netlify|heroku/i, '🖥️'],
+    [/coursera|udemy|skillshare|duolingo|brilliant/i, '📚'],
+    [/insurance|loan|credit/i, '💳'],
+    [/nordvpn|expressvpn|surfshark|proton/i, '🔒'],
+    [/substack|medium|bloomberg|wsj/i, '📧'],
+    [/shopee|tokopedia|amazon prime|shopify/i, '🛒'],
+  ]
+  for (const [regex, icon] of patterns) {
+    if (regex.test(lower)) return icon
+  }
+  return SUBSCRIPTION_ICONS[category.toLowerCase()] ?? '📦'
+}
+
 interface SubscriptionState {
   adapter: DatabaseAdapter | null
   subscriptions: Subscription[]
