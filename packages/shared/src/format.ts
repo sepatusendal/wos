@@ -86,3 +86,120 @@ export function formatShortDate(dateStr: string): string {
   if (isNaN(d.getTime())) return dateStr
   return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })
 }
+
+// ── Multi-currency conversion ────────────────────────────
+
+/** Supported currencies ordered by global adoption */
+export const SUPPORTED_CURRENCIES = [
+  'IDR', 'USD', 'EUR', 'JPY', 'GBP', 'SGD', 'MYR', 'AUD',
+  'CNY', 'KRW', 'THB', 'PHP', 'VND', 'INR', 'SAR', 'CHF',
+] as const
+
+export type CurrencyCode = (typeof SUPPORTED_CURRENCIES)[number]
+
+export interface ExchangeRates {
+  base: CurrencyCode
+  date: string
+  rates: Partial<Record<CurrencyCode, number>>
+}
+
+/** In-memory cache keyed by base + date. Invalidated every 24h. */
+const rateCache = new Map<string, ExchangeRates>()
+
+function rateCacheKey(base: CurrencyCode): string {
+  const today = new Date().toISOString().slice(0, 10)
+  return `${base}:${today}`
+}
+
+/**
+ * Fetch live exchange rates from Frankfurter API (free, no auth).
+ * Falls back to hardcoded approximate rates if the API is unreachable.
+ *
+ * @see https://api.frankfurter.app
+ */
+export async function fetchExchangeRates(base: CurrencyCode = 'IDR'): Promise<ExchangeRates> {
+  const key = rateCacheKey(base)
+  if (rateCache.has(key)) return rateCache.get(key)!
+
+  try {
+    const res = await fetch(`https://api.frankfurter.app/latest?from=${base}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    const rates: ExchangeRates = { base, date: data.date, rates: data.rates }
+    rateCache.set(key, rates)
+    return rates
+  } catch {
+    // Offline fallback — approximate rates relative to IDR (Aug 2026)
+    const fallback: ExchangeRates = {
+      base,
+      date: new Date().toISOString().slice(0, 10),
+      rates: FALLBACK_RATES[base] ?? {},
+    }
+    return fallback
+  }
+}
+
+/** Approximate exchange rates → 1 unit = X IDR. Used as offline fallback. */
+const FALLBACK_RATES: Record<string, Partial<Record<CurrencyCode, number>>> = {
+  IDR: { USD: 1 / 16000, EUR: 1 / 17500, JPY: 1 / 108, SGD: 1 / 12000, GBP: 1 / 20500, MYR: 1 / 3450, AUD: 1 / 10500, CNY: 1 / 2200, KRW: 1 / 12, THB: 1 / 450, PHP: 1 / 285, VND: 1 / 0.65, INR: 1 / 192, SAR: 1 / 4270, CHF: 1 / 18400 },
+  USD: { IDR: 16000, EUR: 0.91, JPY: 148, SGD: 1.33, GBP: 0.78, MYR: 4.64, AUD: 1.52, CNY: 7.27, KRW: 1333, THB: 35.5, PHP: 56, VND: 24600, INR: 83.3, SAR: 3.75, CHF: 0.87 },
+}
+
+/**
+ * Convert an amount from one currency to another.
+ * Fetches live rates on first call, caches for 24h.
+ */
+export async function convertCurrency(
+  amount: number,
+  from: CurrencyCode,
+  to: CurrencyCode,
+): Promise<number> {
+  if (from === to) return amount
+
+  const rates = await fetchExchangeRates(from)
+  const rate = rates.rates[to]
+  if (rate === undefined) {
+    // Try reverse: convert from → USD → to
+    const usdRates = await fetchExchangeRates('USD' as CurrencyCode)
+    const fromToUsd = usdRates.rates[from]
+    const usdToTarget = usdRates.rates[to]
+    if (fromToUsd !== undefined && usdToTarget !== undefined) {
+      return amount * (1 / fromToUsd) * usdToTarget
+    }
+    throw new Error(`No exchange rate available for ${from} → ${to}`)
+  }
+  return amount * rate
+}
+
+/** Sync conversion using pre-fetched rates (avoids async in render paths) */
+export function convertCurrencySync(
+  amount: number,
+  from: CurrencyCode,
+  to: CurrencyCode,
+  rates: ExchangeRates,
+): number {
+  if (from === to) return amount
+  const rate = rates.rates[to]
+  if (rate === undefined) throw new Error(`No rate for ${from} → ${to}`)
+  return amount * rate
+}
+
+/** Currency metadata for UI display */
+export const CURRENCY_META: Record<CurrencyCode, { symbol: string; name: string; flag: string }> = {
+  IDR: { symbol: 'Rp', name: 'Rupiah', flag: '🇮🇩' },
+  USD: { symbol: '$', name: 'US Dollar', flag: '🇺🇸' },
+  EUR: { symbol: '€', name: 'Euro', flag: '🇪🇺' },
+  JPY: { symbol: '¥', name: 'Yen', flag: '🇯🇵' },
+  GBP: { symbol: '£', name: 'Pound Sterling', flag: '🇬🇧' },
+  SGD: { symbol: 'S$', name: 'Singapore Dollar', flag: '🇸🇬' },
+  MYR: { symbol: 'RM', name: 'Ringgit', flag: '🇲🇾' },
+  AUD: { symbol: 'A$', name: 'Australian Dollar', flag: '🇦🇺' },
+  CNY: { symbol: '¥', name: 'Yuan', flag: '🇨🇳' },
+  KRW: { symbol: '₩', name: 'Won', flag: '🇰🇷' },
+  THB: { symbol: '฿', name: 'Baht', flag: '🇹🇭' },
+  PHP: { symbol: '₱', name: 'Peso', flag: '🇵🇭' },
+  VND: { symbol: '₫', name: 'Dong', flag: '🇻🇳' },
+  INR: { symbol: '₹', name: 'Rupee', flag: '🇮🇳' },
+  SAR: { symbol: '﷼', name: 'Riyal', flag: '🇸🇦' },
+  CHF: { symbol: 'Fr', name: 'Swiss Franc', flag: '🇨🇭' },
+}
