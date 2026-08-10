@@ -4,14 +4,7 @@ import { useWealthStore } from '../../stores/wealthStore'
 import { useNetWorthStore } from '../../stores/netWorthStore'
 import { useTodoStore } from '../../stores/todoStore'
 import { useAuthStore } from '../../stores/authStore'
-import { useAchievementStore, ACHIEVEMENTS } from '../../stores/achievementStore'
-import { useCheckinStore } from '../../stores/checkinStore'
-import { useNotesStore } from '../../stores/notesStore'
-import { useLevelStore, xpInCurrentLevel, xpNeededForNextLevel } from '../../stores/levelStore'
-import { NeubruCard, NeubruTag, NeubruBtn, NeubruInput, FinancialPet } from '../../components'
-import FortuneTeller from '../../components/FortuneTeller'
-import OnThisDay from '../../components/OnThisDay'
-import MonthlyCard from '../../components/MonthlyCard'
+import { NeubruCard, NeubruTag, NeubruBtn, NeubruInput } from '../../components'
 import { formatDate, formatShortDate, formatMonthShort, todayStr } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts'
@@ -32,206 +25,6 @@ function pctChange(cur: number, prev: number): { pct: number; dir: 1 | -1 | 0; i
 
 type DateFilter = 'today' | 'month' | 'year' | 'custom' | 'all'
 
-function DailyCheckinWidget() {
-  const todayChecked = useCheckinStore((s) => s.todayChecked)
-  const todayMood = useCheckinStore((s) => s.todayMood)
-  const todayEnergy = useCheckinStore((s) => s.todayEnergy)
-  const MOOD_EMOJIS = ['😫', '😐', '🙂', '😊', '🔥']
-
-  if (todayChecked) {
-    return (
-      <>
-        <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">🧘 Daily Check-in</div>
-        <div className="text-xl font-extrabold">
-          {MOOD_EMOJIS[todayMood - 1] || '🙂'}
-          {' · '}
-          <span className="text-nb-yellow">{'⚡'.repeat(todayEnergy)}</span>
-        </div>
-        <div className="text-xs text-nb-green mt-1 font-medium">Checked in today!</div>
-      </>
-    )
-  }
-
-  return (
-    <>
-      <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">🧘 Daily Check-in</div>
-      <div className="text-nb-orange font-mono text-lg font-extrabold">🧘 Check in</div>
-      <div className="text-xs text-nb-fg-muted mt-1 font-medium">How are you today?</div>
-    </>
-  )
-}
-
-function daysAgo(n: number): string {
-  const d = new Date()
-  d.setDate(d.getDate() - n)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function LifeScoreMini() {
-  const transactions = useFinanceStore((s) => s.transactions)
-  const accounts = useFinanceStore((s) => s.accounts)
-  const entries = useNetWorthStore((s) => s.entries)
-  const todos = useTodoStore((s) => s.todos)
-  const notes = useNotesStore((s) => s.notes)
-
-  const lifeScore = useMemo(() => {
-    // Wealth score (simplified — same as FIRE health score)
-    const now = new Date()
-    const sixMoAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1)
-    const cutoff = sixMoAgo.toISOString().slice(0, 7)
-
-    const recentTx = transactions.filter((t) => t.date >= cutoff)
-    const totalExpense = recentTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-    const totalIncome = recentTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-    const months = Math.max(1, (now.getFullYear() - sixMoAgo.getFullYear()) * 12 + (now.getMonth() - sixMoAgo.getMonth() + 1))
-    const avgIncome = Math.round(totalIncome / months)
-    const avgExpense = Math.round(totalExpense / months)
-
-    const cashBank = accounts.filter((a) => a.type === 'cash' || a.type === 'bank').reduce((s, a) => s + a.balance, 0)
-
-    const rawSavingsRate = avgIncome > 0 ? ((avgIncome - avgExpense) / avgIncome) * 100 : 0
-    const savingsScore = Math.min(30, Math.round((Math.max(0, rawSavingsRate) / 50) * 30))
-
-    const runwayMonths = avgExpense > 0 ? cashBank / avgExpense : 0
-    const runwayScore = Math.min(25, Math.round((Math.min(runwayMonths, 12) / 12) * 25))
-
-    const sortedEntries = [...entries].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
-    const latestEntry = sortedEntries[0]
-    const totalDebt = latestEntry?.totalLiabilities ?? 0
-    const totalAssetNW = latestEntry?.totalAssets ?? 0
-    const debtRatio = totalAssetNW > 0 ? totalDebt / totalAssetNW : 0
-    const debtScore = Math.min(25, Math.round(Math.max(0, 1 - debtRatio) * 25))
-
-    let growthScore = 0
-    if (sortedEntries.length >= 2) {
-      const sixMoDate = sixMoAgo.toISOString().slice(0, 10)
-      const latestNW = sortedEntries[0]?.netWorth ?? 0
-      const oldEntry = sortedEntries.find((e) => (e.date ?? '') <= sixMoDate)
-      const oldNW = oldEntry ? oldEntry.netWorth : (sortedEntries[sortedEntries.length - 1]?.netWorth ?? 0)
-      if (oldNW > 0) {
-        const growthPct = ((latestNW - oldNW) / oldNW) * 100
-        growthScore = Math.min(20, Math.round(Math.max(0, growthPct) * 2))
-      } else if (latestNW > 0) growthScore = 20
-    }
-
-    const wealthScore = Math.min(100, savingsScore + runwayScore + debtScore + growthScore)
-
-    // Productivity score
-    const totalTodos = todos.length
-    const completedTodos = todos.filter((t) => t.completed).length
-    const completionRate = totalTodos > 0 ? completedTodos / totalTodos : 0
-    const completionTodoScore = Math.min(60, Math.round(completionRate * 60))
-    const weekAgo = daysAgo(7)
-    const doneThisWeek = todos.filter((t) => t.completed && t.updatedAt >= weekAgo).length
-    const weeklyTaskScore = Math.min(40, doneThisWeek * 10)
-    const productivityScore = Math.min(100, completionTodoScore + weeklyTaskScore)
-
-    // Mind score
-    const thirtyDaysAgo = daysAgo(30)
-    const recentNotes = notes.filter((n) => n.createdAt >= thirtyDaysAgo)
-    const notesScore = Math.min(40, recentNotes.length * 8)
-    const journalNotes = notes.filter((n) => {
-      const t = (n.title + ' ' + n.content).toLowerCase()
-      return t.includes('journal') || t.includes('diary') || t.includes('reflection')
-    })
-    const recentJournals = journalNotes.filter((n) => n.createdAt >= thirtyDaysAgo)
-    const journalDays = new Set(recentJournals.map((n) => n.createdAt.slice(0, 10)))
-    const journalScore = Math.min(35, journalDays.size * 7)
-    const learningNotes = notes.filter((n) => {
-      const t = (n.title + ' ' + n.content).toLowerCase()
-      return t.includes('learning') || t.includes('course') || t.includes('study') || t.includes('belajar')
-    })
-    const recentLearning = learningNotes.filter((n) => n.createdAt >= thirtyDaysAgo)
-    const learningScore = Math.min(25, recentLearning.length * 5)
-    const mindScore = Math.min(100, notesScore + journalScore + learningScore)
-
-    // Average with estimated Vitality and Social at 50
-    const estimatedVitality = 50
-    const estimatedSocial = 50
-    return Math.round((wealthScore + estimatedVitality + mindScore + productivityScore + estimatedSocial) / 5)
-  }, [transactions, accounts, entries, todos, notes])
-
-  const scoreColor = lifeScore >= 65 ? 'var(--color-nb-green)' : lifeScore >= 45 ? 'var(--color-nb-orange)' : 'var(--color-nb-red)'
-  const label = lifeScore >= 65 ? 'Good' : lifeScore >= 45 ? 'Fair' : 'Needs Love'
-
-  return (
-    <div className="cursor-pointer" onClick={() => (window as any).__wosNavigate?.('life')} title="View full Life Score">
-      <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">🧠 Life Score</div>
-      <div className="font-mono text-xl font-extrabold" style={{ color: scoreColor }}>
-        {lifeScore}/100
-      </div>
-      <div className="text-xs text-nb-fg-muted mt-1 font-medium">{label} · click for full</div>
-      {/* Mini sparkline bar of 5 dimensions */}
-      <div className="flex gap-0.5 mt-2">
-        {[
-          { label: 'W', score: (() => {
-            const n = new Date()
-            const sm = new Date(n.getFullYear(), n.getMonth() - 6, 1)
-            const cut = sm.toISOString().slice(0, 7)
-            const rTx = transactions.filter((t) => t.date >= cut)
-            const tInc = rTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-            const tExp = rTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-            const ms = Math.max(1, (n.getFullYear() - sm.getFullYear()) * 12 + (n.getMonth() - sm.getMonth() + 1))
-            const aInc = tInc / ms; const aExp = tExp / ms
-            const c = accounts.filter((a) => a.type === 'cash' || a.type === 'bank').reduce((s, a) => s + a.balance, 0)
-            const sR = aInc > 0 ? ((aInc - aExp) / aInc) * 100 : 0
-            const ss = Math.min(30, Math.round((Math.max(0, sR) / 50) * 30))
-            const rM = aExp > 0 ? c / aExp : 0
-            const rs = Math.min(25, Math.round((Math.min(rM, 12) / 12) * 25))
-            return Math.min(100, ss + rs + 25 + 20)
-          })(), color: 'var(--color-nb-blue)' },
-          { label: 'V', score: 50, color: 'var(--color-nb-green)' },
-          { label: 'M', score: (() => {
-            const tda = daysAgo(30)
-            const rN = notes.filter((n) => n.createdAt >= tda)
-            const ns = Math.min(40, rN.length * 8)
-            const jN = notes.filter((n) => {
-              const t = (n.title + ' ' + n.content).toLowerCase()
-              return t.includes('journal') || t.includes('diary') || t.includes('reflection')
-            }).filter((n) => n.createdAt >= tda)
-            const jD = new Set(jN.map((n) => n.createdAt.slice(0, 10)))
-            const js = Math.min(35, jD.size * 7)
-            const lN = notes.filter((n) => {
-              const t = (n.title + ' ' + n.content).toLowerCase()
-              return t.includes('learning') || t.includes('course') || t.includes('study') || t.includes('belajar')
-            }).filter((n) => n.createdAt >= tda)
-            const ls = Math.min(25, lN.length * 5)
-            return Math.min(100, ns + js + ls)
-          })(), color: 'var(--color-nb-orange)' },
-          { label: 'P', score: (() => {
-            const tt = todos.length
-            const ct = todos.filter((t) => t.completed).length
-            const cr = tt > 0 ? ct / tt : 0
-            const cts = Math.min(60, Math.round(cr * 60))
-            const wa = daysAgo(7)
-            const dtw = todos.filter((t) => t.completed && t.updatedAt >= wa).length
-            const wts = Math.min(40, dtw * 10)
-            return Math.min(100, cts + wts)
-          })(), color: 'var(--color-nb-pink)' },
-          { label: 'S', score: 50, color: 'var(--color-nb-purple)' },
-        ].map((dim) => (
-          <div
-            key={dim.label}
-            className="flex-1 flex flex-col items-center gap-0.5"
-            title={`${dim.label}: ${dim.score}/100`}
-          >
-            <span className="text-[9px] font-bold text-nb-fg-muted">{dim.label}</span>
-            <div className="w-full h-6 bg-nb-bg-alt border border-nb-border overflow-hidden">
-              <div
-                className="w-full transition-all duration-500"
-                style={{ height: `${dim.score}%`, background: dim.color }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 export default function DashboardPage() {
   const userId = useAuthStore((s) => s.userId)
   const formatCurrency = useFormatCurrency()
@@ -239,8 +32,6 @@ export default function DashboardPage() {
   const { assets, fetchAll: fetchWealth } = useWealthStore()
   const { entries, fetchAll: fetchNetWorth } = useNetWorthStore()
   const { todos, fetchAll: fetchTodo } = useTodoStore()
-  const { unlocked, checkAll, getLastUnlocked } = useAchievementStore()
-  const { xp, level, skillPoints } = useLevelStore()
 
   const [loaded, setLoaded] = useState(false)
   const [dateFilter, setDateFilter] = useState<DateFilter>('month')
@@ -256,18 +47,6 @@ export default function DashboardPage() {
         setLoaded(true) // Still show dashboard; individual sections handle empty data
       })
   }, [userId, fetchFinance, fetchWealth, fetchNetWorth, fetchTodo])
-
-  // Check achievements after data is loaded
-  useEffect(() => {
-    if (!loaded) return
-    const prevUnlocked = [...unlocked]
-    checkAll()
-    // Check if new achievement was unlocked
-    const currentUnlocked = useAchievementStore.getState().unlocked
-    if (currentUnlocked.length > prevUnlocked.length) {
-      ;(window as any).__wosConfetti?.()
-    }
-  }, [loaded, checkAll, unlocked])
 
   const today = todayStr()
   const thisMonthKey = today.slice(0, 7)
@@ -363,18 +142,6 @@ export default function DashboardPage() {
 
   const budgetWarnings = budgetProgress.filter((b) => b.pct > 80).length
 
-  const flexibilityBreakdown = useMemo(() => {
-    const expenses = filteredTx.filter((t) => t.type === 'expense')
-    const fixed = expenses.filter((t) => (t as any).flexibility === 'fixed').reduce((s, t) => s + t.amount, 0)
-    const flexible = expenses.filter((t) => (t as any).flexibility === 'flexible' || !(t as any).flexibility).reduce((s, t) => s + t.amount, 0)
-    const discretionary = expenses.filter((t) => (t as any).flexibility === 'discretionary').reduce((s, t) => s + t.amount, 0)
-    const total = fixed + flexible + discretionary
-    const fixedPct = total > 0 ? Math.round((fixed / total) * 100) : 0
-    const flexPct = total > 0 ? Math.round((flexible / total) * 100) : 0
-    const discPct = total > 0 ? Math.round((discretionary / total) * 100) : 0
-    return { fixed, flexible, discretionary, total, fixedPct, flexPct, discPct }
-  }, [filteredTx])
-
   if (!loaded) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -416,14 +183,7 @@ export default function DashboardPage() {
               {p.label}
             </NeubruBtn>
           ))}
-          <MonthlyCard />
         </div>
-      </div>
-
-      {/* ── Fortune Teller & On This Day ── */}
-      <div className="grid grid-cols-2 gap-5 mb-7">
-        <FortuneTeller />
-        <OnThisDay />
       </div>
 
       {dateFilter === 'custom' && (
@@ -444,37 +204,6 @@ export default function DashboardPage() {
           <div className="text-xs text-nb-fg-muted mt-1 font-medium">
             +{formatCurrency(monthIncome)} · -{formatCurrency(monthExpense)}
             {changeBadge(pctChange(monthNet, prevIncome - prevExpense))}
-          </div>
-        </NeubruCard>
-        <NeubruCard>
-          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">XP & Level</div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <div
-              className="w-10 h-10 border-2 border-nb-border bg-nb-yellow flex items-center justify-center font-black text-sm cursor-pointer"
-              style={{ boxShadow: '2px 2px 0 #0b0b0b' }}
-              title="Click to open Skill Tree"
-              onClick={() => (window as any).__wosNavigate?.('skills')}
-            >
-              {level}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-black text-sm">Lv. {level}</div>
-              <div className="text-[10px] text-nb-fg-muted font-bold">
-                ✦ {skillPoints} point{skillPoints !== 1 ? 's' : ''}
-              </div>
-            </div>
-          </div>
-          <div className="h-3 bg-nb-bg border-2 border-nb-border overflow-hidden mb-1">
-            <div
-              className="h-full transition-all duration-500"
-              style={{
-                width: `${(() => { const cur = xpInCurrentLevel(xp); const need = xpNeededForNextLevel(xp); return need > 0 ? Math.min(Math.round((cur / need) * 100), 100) : 100 })()}%`,
-                background: 'linear-gradient(90deg, #ffd800, #ff8a00)',
-              }}
-            />
-          </div>
-          <div className="text-[10px] font-mono font-bold text-nb-fg-muted">
-            ⚡ {xpInCurrentLevel(xp).toLocaleString()} / {xpNeededForNextLevel(xp).toLocaleString()} XP to Lv. {level + 1}
           </div>
         </NeubruCard>
         <NeubruCard>
@@ -516,54 +245,6 @@ export default function DashboardPage() {
               <span className="text-nb-red ml-2">· ⚠️ {budgetWarnings} budget almost full</span>
             )}
           </div>
-        </NeubruCard>
-        <NeubruCard>
-          <DailyCheckinWidget />
-        </NeubruCard>
-        <NeubruCard>
-          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Flexible Spend</div>
-          <div className="text-nb-orange font-mono text-xl font-extrabold">{formatCurrency(flexibilityBreakdown.flexible + flexibilityBreakdown.discretionary)}</div>
-          <div className="text-xs text-nb-fg-muted mt-1 font-medium">
-            {flexibilityBreakdown.discretionary > 0 && (
-              <span className="text-nb-orange font-bold">Potentially save: {formatCurrency(flexibilityBreakdown.discretionary)}</span>
-            )}
-          </div>
-          {flexibilityBreakdown.total > 0 && (
-            <div className="mt-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <div className="flex-1 h-3 bg-nb-bg border-2 border-nb-border overflow-hidden flex">
-                  <div className="h-full transition-all" style={{ width: `${flexibilityBreakdown.fixedPct}%`, background: '#22c55e' }} title={`Fixed ${flexibilityBreakdown.fixedPct}%`} />
-                  <div className="h-full transition-all" style={{ width: `${flexibilityBreakdown.flexPct}%`, background: '#eab308' }} title={`Flexible ${flexibilityBreakdown.flexPct}%`} />
-                  <div className="h-full transition-all" style={{ width: `${flexibilityBreakdown.discPct}%`, background: '#ef4444' }} title={`Discr. ${flexibilityBreakdown.discPct}%`} />
-                </div>
-              </div>
-              <div className="flex gap-3 text-[10px] font-bold text-nb-fg-muted">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: '#22c55e' }} />Fixed {flexibilityBreakdown.fixedPct}%</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: '#eab308' }} />Flex {flexibilityBreakdown.flexPct}%</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: '#ef4444' }} />Disc {flexibilityBreakdown.discPct}%</span>
-              </div>
-            </div>
-          )}
-        </NeubruCard>
-        <NeubruCard>
-          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Achievements</div>
-          <div className="text-nb-yellow font-mono text-xl font-extrabold">
-            {unlocked.length}/{ACHIEVEMENTS.length}
-          </div>
-          <div className="text-xs text-nb-fg-muted mt-1 font-medium">
-            {(() => {
-              const last = getLastUnlocked()
-              return last ? <span title={last.desc}>{last.icon} {last.name}</span> : 'No badges yet'
-            })()}
-          </div>
-        </NeubruCard>
-
-        <NeubruCard>
-          <LifeScoreMini />
-        </NeubruCard>
-
-        <NeubruCard className="!p-0 overflow-visible">
-          <FinancialPet />
         </NeubruCard>
       </div>
 

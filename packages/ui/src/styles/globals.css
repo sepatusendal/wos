@@ -34,53 +34,6 @@
   --shadow-nb-lg: 8px 8px 0 var(--color-nb-border);
 }
 
-/* ── Dark mode theme overrides ──────────────────────────── */
-[data-theme="dark"] {
-  --color-nb-bg: #1a1a2e;
-  --color-nb-bg-alt: #16213e;
-  --color-nb-fg: #e8e8e8;
-  --color-nb-fg-muted: #a0a0b0;
-  --color-nb-border: #e8e8e8;
-  --color-nb-yellow: #ffd800;
-  --color-nb-yellow-hover: #ffe250;
-  --color-nb-blue: #4d82ff;
-  --color-nb-blue-hover: #7aa3ff;
-  --color-nb-green: #22c55e;
-  --color-nb-green-hover: #4ade80;
-  --color-nb-pink: #ff7da0;
-  --color-nb-pink-hover: #ffa3ba;
-  --color-nb-orange: #ff9d2e;
-  --color-nb-orange-hover: #ffb966;
-  --color-nb-purple: #a78bfa;
-  --color-nb-purple-hover: #c4b5fd;
-  --color-nb-red: #ff6b6b;
-  --color-nb-red-hover: #ff9595;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --color-nb-bg: #1a1a2e;
-    --color-nb-bg-alt: #16213e;
-    --color-nb-fg: #e8e8e8;
-    --color-nb-fg-muted: #a0a0b0;
-    --color-nb-border: #e8e8e8;
-    --color-nb-yellow: #ffd800;
-    --color-nb-yellow-hover: #ffe250;
-    --color-nb-blue: #4d82ff;
-    --color-nb-blue-hover: #7aa3ff;
-    --color-nb-green: #22c55e;
-    --color-nb-green-hover: #4ade80;
-    --color-nb-pink: #ff7da0;
-    --color-nb-pink-hover: #ffa3ba;
-    --color-nb-orange: #ff9d2e;
-    --color-nb-orange-hover: #ffb966;
-    --color-nb-purple: #a78bfa;
-    --color-nb-purple-hover: #c4b5fd;
-    --color-nb-red: #ff6b6b;
-    --color-nb-red-hover: #ff9595;
-  }
-}
-
 @layer base {
   * {
     box-sizing: border-box;
@@ -299,23 +252,6 @@
   }
 }
 
-@keyframes bounce-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.3) translateY(20px);
-  }
-  40% {
-    transform: scale(1.05) translateY(-4px);
-  }
-  70% {
-    transform: scale(0.97) translateY(2px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
 @keyframes page-enter {
   0% {
     opacity: 0;
@@ -338,78 +274,12 @@
   }
 }
 
-/* ── Pet Animations ── */
-
-@keyframes pet-bounce {
-  0%, 100% { transform: translateY(0); }
-  30% { transform: translateY(-8px); }
-  50% { transform: translateY(0); }
-  70% { transform: translateY(-4px); }
-  85% { transform: translateY(0); }
-}
-
-@keyframes pet-sway {
-  0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(3deg); }
-  75% { transform: rotate(-3deg); }
-}
-
-@keyframes pet-blink {
-  0%, 80%, 100% { opacity: 1; }
-  85%, 95% { opacity: 0.15; }
-}
-
-@keyframes pet-shake {
-  0%, 100% { transform: translateX(0); }
-  15% { transform: translateX(-6px); }
-  30% { transform: translateX(6px); }
-  45% { transform: translateX(-4px); }
-  60% { transform: translateX(4px); }
-  75% { transform: translateX(-2px); }
-  90% { transform: translateX(2px); }
-}
-
-@keyframes pet-float {
-  0%, 100% { transform: translateY(0); opacity: 0.5; }
-  50% { transform: translateY(-3px); opacity: 0.7; }
-}
-
-@keyframes pet-sparkle {
-  0%, 100% { transform: scale(1) rotate(0deg); }
-  25% { transform: scale(1.15) rotate(-8deg); }
-  50% { transform: scale(1) rotate(0deg); }
-  75% { transform: scale(1.1) rotate(8deg); }
-}
-
 @layer utilities {
-  .animate-bounce-in {
-    animation: bounce-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
   .animate-page-enter {
     animation: page-enter 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
   .animate-slide-up {
     animation: slide-up-fade 0.3s ease-out forwards;
-  }
-
-  /* Pet animation utilities */
-  .animate-bounce-pet {
-    animation: pet-bounce 1.8s ease-in-out infinite;
-  }
-  .animate-sway {
-    animation: pet-sway 3s ease-in-out infinite;
-  }
-  .animate-blink {
-    animation: pet-blink 4s ease-in-out infinite;
-  }
-  .animate-shake {
-    animation: pet-shake 0.6s ease-in-out infinite;
-  }
-  .animate-float {
-    animation: pet-float 2.5s ease-in-out infinite;
-  }
-  .animate-sparkle {
-    animation: pet-sparkle 1.2s ease-in-out infinite;
   }
   .bg-nb-yellow { background: var(--color-nb-yellow); }
   .bg-nb-blue { background: var(--color-nb-blue); }
