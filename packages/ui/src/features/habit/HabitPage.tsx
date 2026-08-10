@@ -5,6 +5,7 @@ import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruCh
 import { toast } from 'sonner'
 import { todayStr } from '@wos/shared'
 import type { Habit, HabitColor, HabitFrequency } from '@wos/shared'
+import { useLevelStore } from '../../stores/levelStore'
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -168,7 +169,17 @@ export default function HabitPage() {
   const handleToggleToday = async (habitId: string) => {
     const today = todayStr()
     const log = logs.find((l) => l.habitId === habitId && l.date === today)
-    await toggleLog(habitId, today, !log?.done)
+    const newDone = !log?.done
+    await toggleLog(habitId, today, newDone)
+    if (newDone) {
+      useLevelStore.getState().addXP(10)
+      toast.success('⚡ +10 XP')
+      // Confetti for 30-day streak
+      const streak = useHabitStore.getState().getStreak(habitId)
+      if (streak >= 30) {
+        ;(window as any).__wosConfetti?.()
+      }
+    }
   }
 
   const toggleDay = (dayValue: string) => {

@@ -4,8 +4,9 @@ import { useFinanceStore } from '../../stores/financeStore'
 import { useTodoStore } from '../../stores/todoStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag } from '../../components'
-import { formatDate } from '@wos/shared'
+import { formatDate, todayStr } from '@wos/shared'
 import { toast } from 'sonner'
+import { useLevelStore } from '../../stores/levelStore'
 
 export default function NotesPage() {
   const { notes, addNote, editNote, deleteNote } = useNotesStore()
@@ -85,19 +86,19 @@ export default function NotesPage() {
       return
     }
     if (editId) {
-      editNote(editId, {
-        title: title.trim(),
-        content: content.trim(),
-        linkedTransactionId: linkedTxId || null,
-        linkedTodoId: linkedTodoId || null,
-      })
+      const uid = useAuthStore.getState().userId
+      if (!uid) return
+      editNote({ id: editId, title: title.trim(), content, tags: [], date: todayStr(), pinned: false })
     } else {
-      addNote({
-        title: title.trim(),
-        content: content.trim(),
+      const uid = useAuthStore.getState().userId
+      if (!uid) return
+      addNote(uid, {
+        title: title.trim(), content, tags: [], date: todayStr(), pinned: false,
         linkedTransactionId: linkedTxId || null,
         linkedTodoId: linkedTodoId || null,
       })
+      useLevelStore.getState().addXP(15)
+      toast.success('⚡ +15 XP')
     }
     setShowModal(false)
   }

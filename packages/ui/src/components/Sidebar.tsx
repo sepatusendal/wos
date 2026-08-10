@@ -13,7 +13,11 @@ const PAGES = [
   { id: 'vault', label: 'Vault', icon: '🔐' },
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'todo', label: 'Todo', icon: '✅' },
+  { id: 'tools', label: 'Tools', icon: '🧮' },
   { id: 'review', label: 'Review', icon: '🎉' },
+  { id: 'records', label: 'Records', icon: '🏅' },
+  { id: 'skills', label: 'Skills', icon: '🌟' },
+  { id: 'life', label: 'Life Score', icon: '🧠' },
   { id: 'settings', label: 'Settings', icon: '⚙️' },
 ] as const
 

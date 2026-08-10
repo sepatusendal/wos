@@ -3,7 +3,8 @@ import { useAuthStore } from '../../stores/authStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useFinanceStore } from '../../stores/financeStore'
 import { useVaultStore } from '../../stores/vaultStore'
-import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect } from '../../components'
+import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruCheckbox } from '../../components'
+import { useRoastStore } from '../../stores/roastStore'
 import { toast } from 'sonner'
 import { exportCSV } from '../../utils/export'
 
@@ -41,6 +42,7 @@ export default function SettingsPage() {
   const { settings, loaded, fetchSettings, updateSettings, changePassword } = useSettingsStore()
   const { transactions, fetchAll: fetchFinance } = useFinanceStore()
   const { checkVaultSetup, changeVaultPassword } = useVaultStore()
+  const { roastMode, toggleRoast } = useRoastStore()
 
   const [currentPw, setCurrentPw] = useState('')
   const [newPw, setNewPw] = useState('')
@@ -283,6 +285,22 @@ export default function SettingsPage() {
                 {pdfLoading ? '⏳...' : '📥 PDF'}
               </NeubruBtn>
             </div>
+          </div>
+        </NeubruCard>
+      </div>
+
+      {/* Roast Mode */}
+      <div className="mb-7">
+        <h3 className="mb-3">👻 Roast Mode</h3>
+        <NeubruCard>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-bold text-sm flex items-center gap-2">
+                <span className="text-xl">👻</span> Roast Mode
+              </div>
+              <div className="text-xs text-nb-fg-muted mt-1">Biar app nge-roast spending lo</div>
+            </div>
+            <NeubruCheckbox checked={roastMode} onChange={toggleRoast} />
           </div>
         </NeubruCard>
       </div>

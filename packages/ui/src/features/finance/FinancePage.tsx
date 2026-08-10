@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { useFinanceStore } from '../../stores/financeStore'
 import { useNotesStore } from '../../stores/notesStore'
 import { useAuthStore } from '../../stores/authStore'
+import { useRoastStore } from '../../stores/roastStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag } from '../../components'
 import { formatDate, todayStr, formatShortDate, formatMonthShort } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
@@ -11,6 +12,8 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { exportCSV, generatePDFProps } from '../../utils/export'
 import { BlobProvider } from '@react-pdf/renderer'
 import { TransactionPDF } from '../../utils/TransactionPDF'
+import { useLevelStore } from '../../stores/levelStore'
+import MoneyTimeline from '../../components/MoneyTimeline'
 
 const EXPENSE_CATS = ['Makan', 'Transport', 'Belanja', 'Hiburan', 'Tagihan', 'Kesehatan', 'Pendidikan', 'Transfer', 'Lainnya']
 const INCOME_CATS = ['Gaji', 'Freelance', 'Investasi', 'Bisnis', 'Transfer', 'Lainnya']
@@ -29,6 +32,7 @@ function monthKey(d: Date): string {
 export default function FinancePage() {
   const userId = useAuthStore((s) => s.userId)
   const formatCurrency = useFormatCurrency()
+  const { roastMode, toggleRoast, generateRoast } = useRoastStore()
   const {
     transactions, budgets, accounts, savingsGoals, recurring,
     budgetRollover,
@@ -52,6 +56,7 @@ export default function FinancePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterAccount, setFilterAccount] = useState('')
   const [filterCategory, setFilterCategory] = useState('')
+  const [viewMode, setViewMode] = useState<'list' | 'timeline'>('list')
   const [showExportMenu, setShowExportMenu] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   // CSV Import states
@@ -96,6 +101,7 @@ export default function FinancePage() {
   const [recNext, setRecNext] = useState(todayStr())
   const [recEditId, setRecEditId] = useState<string | null>(null)
   const [recActive, setRecActive] = useState(true)
+  const confettiFiredTx100 = useRef(false)
 
   useEffect(() => {
     if (!userId) return
@@ -108,6 +114,14 @@ export default function FinancePage() {
       }
     })
   }, [userId, fetchAll, processRecurring])
+
+  // Confetti trigger: 100th transaction
+  useEffect(() => {
+    if (transactions.length >= 100 && !confettiFiredTx100.current) {
+      confettiFiredTx100.current = true
+      ;(window as any).__wosConfetti?.()
+    }
+  }, [transactions.length])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -177,6 +191,12 @@ export default function FinancePage() {
     })
   }, [budgets, transactions])
 
+  const roastText = useMemo(() => {
+    if (!roastMode) return ''
+    return generateRoast(transactions, budgetSpending)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roastMode, transactions, budgets, generateRoast])
+
   // ── Budget vs Actual: monthly rollover + overspend suggestions ──
   const budgetVsActual = useMemo(() => {
     const now = new Date()
@@ -241,7 +261,7 @@ export default function FinancePage() {
     if (isNaN(numAmount) || numAmount <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
     const oldAmount = editId ? useFinanceStore.getState().transactions.find((t) => t.id === editId)?.amount ?? 0 : 0
     if (editId) { await editTransaction({ id: editId, type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }) }
-    else { await addTransaction(userId, { type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }) }
+    else { await addTransaction(userId, { type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }); useLevelStore.getState().addXP(5); toast.success('⚡ +5 XP') }
     if (type === 'expense') checkBudgetAlert(category, numAmount, oldAmount)
     setShowTxModal(false)
   }
@@ -263,6 +283,8 @@ export default function FinancePage() {
   const saveBudget = async () => {
     if (!userId || !budgetCat || !budgetLimit) return
     await addBudget(userId, { category: budgetCat, limit: Number(budgetLimit) })
+    useLevelStore.getState().addXP(20)
+    toast.success('⚡ +20 XP')
     setBudgetLimit('')
     setShowBudgetModal(false)
   }
@@ -280,9 +302,15 @@ export default function FinancePage() {
   const openEditGoal = (g: any) => { setGoalEditId(g.id); setGoalName(g.name); setGoalTarget(String(g.targetAmount)); setGoalSaved(String(g.savedAmount)); setGoalDeadline(g.deadline ?? ''); setShowGoalModal(true) }
   const saveGoal = async () => {
     if (!userId || !goalName || !goalTarget) return
-    if (goalEditId) await editSavingsGoal({ id: goalEditId, name: goalName, targetAmount: Number(goalTarget), savedAmount: Number(goalSaved) || 0, deadline: goalDeadline || null })
-    else await addSavingsGoal(userId, { name: goalName, targetAmount: Number(goalTarget), savedAmount: Number(goalSaved) || 0, deadline: goalDeadline || null })
+    const target = Number(goalTarget)
+    const saved = Number(goalSaved) || 0
+    const pct = target > 0 ? Math.round((saved / target) * 100) : 0
+    if (goalEditId) await editSavingsGoal({ id: goalEditId, name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
+    else await addSavingsGoal(userId, { name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
     setShowGoalModal(false)
+    if (pct >= 100) {
+      ;(window as any).__wosConfetti?.()
+    }
   }
 
   const openAddRecurring = () => { setRecEditId(null); setRecName(''); setRecType('expense'); setRecAmount(''); setRecCategory('Makan'); setRecFreq('monthly'); setRecNext(todayStr()); setRecActive(true); setShowRecurringModal(true) }
@@ -454,7 +482,20 @@ export default function FinancePage() {
   return (
     <div>
       <div className="flex items-start justify-between mb-7 gap-4 flex-wrap">
-        <h2 className="text-[1.8rem]">💸 Finance</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-[1.8rem]">💸 Finance</h2>
+          <button
+            onClick={toggleRoast}
+            className={`text-lg w-10 h-10 border-2 flex items-center justify-center cursor-pointer transition-all ${
+              roastMode
+                ? 'bg-nb-yellow border-nb-border shadow-nb-sm'
+                : 'border-nb-border bg-white hover:bg-nb-yellow/30 opacity-50'
+            }`}
+            title={roastMode ? 'Roast Mode ON' : 'Roast Mode OFF'}
+          >
+            👻
+          </button>
+        </div>
         <div className="flex gap-2.5 flex-wrap">
           <NeubruBtn color="yellow" onClick={() => setShowBudgetModal(true)}>🎯 Budget</NeubruBtn>
           <NeubruBtn color="purple" onClick={openAddRecurring}>🔁 Recurring</NeubruBtn>
@@ -489,6 +530,18 @@ export default function FinancePage() {
           <div className="text-nb-blue font-mono text-xl font-extrabold">{formatCurrency(accountTotal)}</div>
         </NeubruCard>
       </div>
+
+      {roastMode && roastText && (
+        <div className="mb-5 border-3 border-nb-border bg-nb-yellow/20 p-4 animate-bounce-in">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl shrink-0">👻</span>
+            <div>
+              <div className="font-bold text-xs uppercase tracking-[0.08em] text-nb-fg-muted mb-1">Roast of the Day</div>
+              <div className="font-bold text-sm leading-relaxed">{roastText}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {budgetSpending.filter((b) => b.pct >= 80).length > 0 && (
         <div className="mb-5 border-2 border-nb-orange bg-nb-orange/10 p-4">
@@ -703,6 +756,9 @@ export default function FinancePage() {
             </NeubruBtn>
           ))}
           <NeubruInput size="sm" value={monthFilter} onChange={setMonthFilter} placeholder="2026-08" className="!w-[130px]" />
+          <NeubruBtn size="sm" color={viewMode === 'timeline' ? 'yellow' : undefined} onClick={() => setViewMode((v) => v === 'list' ? 'timeline' : 'list')}>
+            {viewMode === 'list' ? '📋 List / ⏳ Timeline' : '⏳ Timeline / 📋 List'}
+          </NeubruBtn>
           <div className="relative" ref={exportMenuRef}>
             <NeubruBtn size="sm" color="blue" onClick={() => setShowExportMenu(!showExportMenu)}>📥 Export</NeubruBtn>
             {showExportMenu && (
@@ -734,7 +790,13 @@ export default function FinancePage() {
         </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {viewMode === 'timeline' ? (
+        <MoneyTimeline
+          transactions={filtered}
+          onEdit={openEdit}
+          onDelete={deleteTransaction}
+        />
+      ) : filtered.length === 0 ? (
         <div className="nb-panel text-center py-16">
           <div className="text-5xl mb-3">{activeFilterCount > 0 ? '🔍' : '📭'}</div>
           <div className="font-bold uppercase text-nb-fg-muted">

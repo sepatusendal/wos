@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import {
   AppLayout, LoginPage, LoadingSpinner,
   useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore,
-  useSubscriptionStore, useHabitStore, useAchievementStore,
+  useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore,
 } from '@wos/ui'
 import { createHttpAdapter } from '@wos/db'
 
@@ -69,6 +69,7 @@ export default function Home() {
     useSubscriptionStore.getState().setAdapter(adapter)
     useHabitStore.getState().setAdapter(adapter)
     useAchievementStore.getState().setAdapter(adapter)
+    useNotesStore.getState().setAdapter(adapter)
     setAdapterReady(true)
   }, [setAdapter])
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore } from '@wos/ui'
+import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore } from '@wos/ui'
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -217,6 +217,7 @@ export default function App() {
         useSubscriptionStore.getState().setAdapter(adapter)
         useHabitStore.getState().setAdapter(adapter)
         useAchievementStore.getState().setAdapter(adapter)
+        useNotesStore.getState().setAdapter(adapter)
         setAdapterReady(true)
       } catch (err: any) {
         console.error('Failed to initialize database:', err)

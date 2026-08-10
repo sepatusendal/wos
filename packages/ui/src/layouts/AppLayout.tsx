@@ -8,7 +8,8 @@ import CommandPalette from '../components/CommandPalette'
 import { useVaultStore } from '../stores/vaultStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCheckinStore } from '../stores/checkinStore'
-import { NeubruBtn, NeubruModal } from '../components'
+import { NeubruBtn, NeubruModal, Confetti } from '../components'
+import WeeklyReflection from '../components/WeeklyReflection'
 
 interface Props {
   children?: ReactNode
@@ -28,6 +29,10 @@ const pageComponents: Record<PageId, () => Promise<{ default: () => React.JSX.El
   review: () => import('../features/review/YearReviewPage'),
   settings: () => import('../features/settings/SettingsPage'),
   fire: () => import('../features/fire/FirePage'),
+  records: () => import('../features/records/RecordsPage'),
+  skills: () => import('../features/skills/SkillTreePage'),
+  life: () => import('../features/life/LifeScorePage'),
+  tools: () => import('../features/tools/ToolsPage'),
 }
 
 export default function AppLayout({ children }: Props) {
@@ -44,6 +49,27 @@ export default function AppLayout({ children }: Props) {
   const [mood, setMood] = useState(3)
   const [energy, setEnergy] = useState(3)
   const [highlight, setHighlight] = useState('')
+
+  // ── Weekly Reflection ──
+  const [showWeeklyReflection, setShowWeeklyReflection] = useState(false)
+
+  useEffect(() => {
+    // Check if today is Sunday
+    const today = new Date()
+    if (today.getDay() === 0) {
+      const weekKey = (() => {
+        const start = new Date(today.getFullYear(), 0, 1)
+        const diff = today.getTime() - start.getTime()
+        const weekNum = Math.ceil(((diff / 86400000) + start.getDay() + 1) / 7)
+        return `${today.getFullYear()}-${String(weekNum).padStart(2, '0')}`
+      })()
+      const alreadyDone = localStorage.getItem(`wos_weekly_reflection_${weekKey}`)
+      if (!alreadyDone) {
+        const timer = setTimeout(() => setShowWeeklyReflection(true), 1500)
+        return () => clearTimeout(timer)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!todayChecked) {
@@ -95,6 +121,12 @@ export default function AppLayout({ children }: Props) {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
+
+  // ── Expose navigate for external calls (e.g. from dashboard widget) ──
+  useEffect(() => {
+    ;(window as any).__wosNavigate = (p: PageId) => navigate(p)
+    return () => { delete (window as any).__wosNavigate }
+  }, [navigate])
 
   // ── Auto-lock timer ──
   useEffect(() => {
@@ -217,6 +249,9 @@ export default function AppLayout({ children }: Props) {
         </div>
       </NeubruModal>
 
+      <WeeklyReflection trigger={showWeeklyReflection} />
+
+      <Confetti />
       <Toaster position="top-right" richColors />
     </div>
   )

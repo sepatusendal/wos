@@ -187,8 +187,11 @@ export const NoteSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1),
   content: z.string().default(''),
-  linkedTransactionId: z.string().uuid().nullable().default(null),
+  tags: z.array(z.string()).default([]),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  pinned: z.boolean().default(false),
   linkedTodoId: z.string().uuid().nullable().default(null),
+  linkedTransactionId: z.string().uuid().nullable().default(null),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 })
