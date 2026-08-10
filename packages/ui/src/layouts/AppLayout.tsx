@@ -20,6 +20,7 @@ const pageComponents: Record<PageId, () => Promise<{ default: () => React.JSX.El
   subscription: () => import('../features/subscription/SubscriptionPage'),
   habit: () => import('../features/habit/HabitPage'),
   vault: () => import('../features/vault/VaultPage'),
+  notes: () => import('../features/notes/NotesPage'),
   todo: () => import('../features/todo/TodoPage'),
   settings: () => import('../features/settings/SettingsPage'),
 }

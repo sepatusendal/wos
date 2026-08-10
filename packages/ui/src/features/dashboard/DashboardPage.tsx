@@ -3,9 +3,11 @@ import { useFinanceStore } from '../../stores/financeStore'
 import { useWealthStore } from '../../stores/wealthStore'
 import { useNetWorthStore } from '../../stores/netWorthStore'
 import { useTodoStore } from '../../stores/todoStore'
+import { useNotesStore } from '../../stores/notesStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruCard, NeubruTag, NeubruBtn, NeubruInput } from '../../components'
-import { formatDate, formatShortDate, formatMonthShort, todayStr } from '@wos/shared'
+import { formatDate, formatShortDate, formatMonthShort, todayStr, fetchWeather, fetchRandomQuote } from '@wos/shared'
+import type { WeatherData, QuoteData } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts'
 
@@ -32,21 +34,27 @@ export default function DashboardPage() {
   const { assets, fetchAll: fetchWealth } = useWealthStore()
   const { entries, fetchAll: fetchNetWorth } = useNetWorthStore()
   const { todos, fetchAll: fetchTodo } = useTodoStore()
+  const { fetchAll: fetchNotes } = useNotesStore()
 
   const [loaded, setLoaded] = useState(false)
+  const [weather, setWeather] = useState<WeatherData | null>(null)
+  const [quote, setQuote] = useState<QuoteData | null>(null)
   const [dateFilter, setDateFilter] = useState<DateFilter>('month')
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
 
   useEffect(() => {
     if (!userId) return
-    Promise.all([fetchFinance(userId), fetchWealth(userId), fetchNetWorth(userId), fetchTodo(userId)])
+    Promise.all([fetchFinance(userId), fetchWealth(userId), fetchNetWorth(userId), fetchTodo(userId), fetchNotes(userId)])
       .then(() => setLoaded(true))
       .catch((err) => {
         console.error('[Dashboard] load failed:', err)
-        setLoaded(true) // Still show dashboard; individual sections handle empty data
+        setLoaded(true)
       })
-  }, [userId, fetchFinance, fetchWealth, fetchNetWorth, fetchTodo])
+    // Small non-blocking widgets — fail silently offline
+    fetchWeather().then(setWeather).catch(() => {})
+    fetchRandomQuote().then(setQuote).catch(() => {})
+  }, [userId, fetchFinance, fetchWealth, fetchNetWorth, fetchTodo, fetchNotes])
 
   const today = todayStr()
   const thisMonthKey = today.slice(0, 7)
@@ -246,6 +254,13 @@ export default function DashboardPage() {
             )}
           </div>
         </NeubruCard>
+        {weather && (
+          <NeubruCard>
+            <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">{weather.icon} Cuaca</div>
+            <div className="font-mono text-xl font-extrabold">{weather.temp}&deg;C</div>
+            <div className="text-xs text-nb-fg-muted mt-1 font-medium">{weather.condition}</div>
+          </NeubruCard>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-5 mb-7">
@@ -418,6 +433,16 @@ export default function DashboardPage() {
           </NeubruCard>
         </div>
       </div>
+
+      {/* ── Quote of the Day ── */}
+      {quote && (
+        <div className="text-center mb-6 border-t-3 border-nb-border pt-4">
+          <blockquote className="text-sm italic text-nb-fg-muted">
+            &ldquo;{quote.text}&rdquo;
+            <span className="text-xs font-bold ml-2 not-italic">&mdash; {quote.author}</span>
+          </blockquote>
+        </div>
+      )}
 
       {/* ── Monthly Summary Table ── */}
       <div className="mb-7">

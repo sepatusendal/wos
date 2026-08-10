@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore } from '@wos/ui'
+import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useNotesStore } from '@wos/ui'
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -102,8 +102,6 @@ export default function App() {
         `)
         // Migration: add vault_verify if upgrading from older schema
         try { await tauriDb.execute(`ALTER TABLE users ADD COLUMN vault_verify TEXT`) } catch {}
-        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
-        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
         try { await tauriDb.execute(`ALTER TABLE users ADD COLUMN session_token TEXT`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS transactions (
@@ -122,12 +120,13 @@ export default function App() {
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS assets (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL,
-            quantity REAL NOT NULL, unit_price REAL NOT NULL, buy_price REAL, buy_date TEXT,
+            ticker TEXT, quantity REAL NOT NULL, unit_price REAL NOT NULL, buy_price REAL, buy_date TEXT,
             notes TEXT NOT NULL DEFAULT '', last_updated TEXT NOT NULL, created_at TEXT NOT NULL
           )
         `)
         try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
         try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN ticker TEXT`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS net_worth_entries (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, date TEXT NOT NULL,
@@ -199,8 +198,18 @@ export default function App() {
         `)
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS habit_logs (
-            id TEXT PRIMARY KEY, habit_id TEXT NOT NULL,
+            id TEXT PRIMARY KEY, habit_id TEXT NOT NULL, user_id TEXT NOT NULL,
             date TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+          )
+        `)
+        try { await tauriDb.execute(`ALTER TABLE habit_logs ADD COLUMN user_id TEXT`) } catch {}
+        await tauriDb.execute(`
+          CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]',
+            date TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0,
+            linked_todo_id TEXT, linked_transaction_id TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
           )
         `)
 
@@ -214,6 +223,7 @@ export default function App() {
         useSettingsStore.getState().setAdapter(adapter)
         useSubscriptionStore.getState().setAdapter(adapter)
         useHabitStore.getState().setAdapter(adapter)
+        useNotesStore.getState().setAdapter(adapter)
         setAdapterReady(true)
       } catch (err: any) {
         console.error('Failed to initialize database:', err)
@@ -238,7 +248,7 @@ export default function App() {
     )
   }
 
-  if (!adapterReady) {
+  if (!adapterReady || !windowReady) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-nb-bg">
         <LoadingSpinner />

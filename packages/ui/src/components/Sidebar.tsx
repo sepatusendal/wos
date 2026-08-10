@@ -10,6 +10,7 @@ const PAGES = [
   { id: 'subscription', label: 'Subscriptions', icon: '📋' },
   { id: 'habit', label: 'Habits', icon: '🔥' },
   { id: 'vault', label: 'Vault', icon: '🔐' },
+  { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'todo', label: 'Todo', icon: '✅' },
   { id: 'settings', label: 'Settings', icon: '⚙️' },
 ] as const

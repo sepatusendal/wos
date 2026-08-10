@@ -11,7 +11,7 @@ import type { Condition, OrderBy, DatabaseAdapter, QueryBuilder } from '../adapt
  *
  * @see https://github.com/sepatusendal/wos/issues/6
  */
-function encodePath(raw: string): string {
+export function encodePath(raw: string): string {
   try {
     // Only encode if we detect non-ASCII chars
     if (/[^\x00-\x7F]/.test(raw)) {
@@ -23,17 +23,6 @@ function encodePath(raw: string): string {
     return raw
   } catch {
     return raw // fallback — let Tauri's error handling take over
-  }
-}
-
-function decodePath(encoded: string): string {
-  try {
-    return encoded
-      .split('/')
-      .map((segment) => decodeURIComponent(segment))
-      .join('/')
-  } catch {
-    return encoded
   }
 }
 
@@ -81,9 +70,7 @@ function formatOrderClause(orders: OrderBy[]): string {
   return orders.map((o) => `${sanitizeIdentifier(o.column)} ${sanitizeDirection(o.direction)}`).join(', ')
 }
 
-export function createTauriSqlAdapter(tauriDb: any, dbPath?: string): DatabaseAdapter {
-  // Normalize path for cross-platform safety (see encodePath doc above)
-  const resolvedPath = dbPath ? encodePath(dbPath) : undefined
+export function createTauriSqlAdapter(tauriDb: any, _dbPath?: string): DatabaseAdapter {
   const db: QueryBuilder = {
     select(...columns: string[]) {
       const colNames = columns.length > 0 ? columns.map(sanitizeIdentifier).join(', ') : '*'

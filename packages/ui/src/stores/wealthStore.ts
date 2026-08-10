@@ -12,15 +12,22 @@ interface PortfolioStats {
   assetsWithPnL: Asset[]
 }
 
+export interface RefreshPricesResult {
+  updated: number
+  failed: number
+}
+
 interface WealthState {
   adapter: DatabaseAdapter | null
   assets: Asset[]
   loading: boolean
+  refreshingPrices: boolean
   setAdapter: (adapter: DatabaseAdapter) => void
   fetchAll: (userId: string) => Promise<void>
   addAsset: (userId: string, a: Omit<Asset, 'id' | 'lastUpdated' | 'createdAt'>) => Promise<void>
-  editAsset: (a: { id: string; name: string; type: string; quantity: number; unitPrice: number; notes: string; buyPrice?: number | null; buyDate?: string | null }) => Promise<void>
+  editAsset: (a: { id: string; name: string; type: string; ticker?: string | null; quantity: number; unitPrice: number; notes: string; buyPrice?: number | null; buyDate?: string | null }) => Promise<void>
   deleteAsset: (id: string) => Promise<void>
+  refreshPrices: (userId: string) => Promise<RefreshPricesResult>
   getPortfolioStats: () => PortfolioStats
 }
 
@@ -28,6 +35,7 @@ export const useWealthStore = create<WealthState>((set, get) => ({
   adapter: null,
   assets: [],
   loading: false,
+  refreshingPrices: false,
 
   setAdapter: (adapter) => set({ adapter }),
 
@@ -47,8 +55,9 @@ export const useWealthStore = create<WealthState>((set, get) => ({
     const id = generateId()
     const now = isoNow()
     await adapter.db.insert('assets').values({
-      id, user_id: userId, name: a.name, type: a.type, quantity: a.quantity,
-      unit_price: a.unitPrice, buy_price: a.buyPrice ?? null, buy_date: a.buyDate ?? null,
+      id, user_id: userId, name: a.name, type: a.type, ticker: (a as any).ticker ?? null,
+      quantity: a.quantity, unit_price: a.unitPrice,
+      buy_price: a.buyPrice ?? null, buy_date: a.buyDate ?? null,
       notes: a.notes, last_updated: now, created_at: now,
     })
     await get().fetchAll(userId)
@@ -58,6 +67,7 @@ export const useWealthStore = create<WealthState>((set, get) => ({
     const { adapter } = get()
     if (!adapter) return
     const setData: Record<string, unknown> = { name: a.name, type: a.type, quantity: a.quantity, unit_price: a.unitPrice, notes: a.notes, last_updated: isoNow() }
+    if (a.ticker !== undefined) setData.ticker = a.ticker
     if (a.buyPrice !== undefined) setData.buy_price = a.buyPrice
     if (a.buyDate !== undefined) setData.buy_date = a.buyDate
     await adapter.db.update('assets').set(setData).where(eq('id', a.id))
@@ -69,6 +79,48 @@ export const useWealthStore = create<WealthState>((set, get) => ({
     if (!adapter) return
     await adapter.db.delete('assets').where(eq('id', id))
     set((s) => ({ assets: s.assets.filter((x) => x.id !== id) }))
+  },
+
+  refreshPrices: async (userId) => {
+    const { adapter, assets } = get()
+    let updated = 0
+    let failed = 0
+
+    const tickered = assets.filter((a) => a.ticker && (a.type === 'stock' || a.type === 'crypto'))
+    if (tickered.length === 0) return { updated, failed }
+
+    set({ refreshingPrices: true })
+
+    try {
+      const { refreshAssetPrices } = await import('@wos/shared')
+      const prices = await refreshAssetPrices(
+        tickered.map((a) => ({ id: a.id, ticker: a.ticker!, type: a.type }))
+      )
+
+      const now = isoNow()
+      for (const a of tickered) {
+        const price = prices.get(a.id)
+        if (price != null) {
+          try {
+            await adapter!.db.update('assets').set({ unit_price: price, last_updated: now }).where(eq('id', a.id))
+            updated++
+          } catch {
+            failed++
+          }
+        } else {
+          failed++
+        }
+      }
+
+      if (updated > 0) {
+        await get().fetchAll(userId)
+      }
+    } catch {
+      failed = tickered.length
+    }
+
+    set({ refreshingPrices: false })
+    return { updated, failed }
   },
 
   getPortfolioStats: () => {
@@ -84,8 +136,9 @@ export const useWealthStore = create<WealthState>((set, get) => ({
 
 function formatAsset(a: any): Asset {
   return {
-    id: a.id, name: a.name, type: a.type, quantity: a.quantity,
-    unitPrice: a.unit_price ?? 0, buyPrice: a.buy_price ?? null, buyDate: a.buy_date ?? null,
+    id: a.id, name: a.name, type: a.type, ticker: a.ticker ?? null,
+    quantity: a.quantity, unitPrice: a.unit_price ?? 0,
+    buyPrice: a.buy_price ?? null, buyDate: a.buy_date ?? null,
     notes: a.notes ?? '', lastUpdated: a.last_updated, createdAt: a.created_at,
   }
 }

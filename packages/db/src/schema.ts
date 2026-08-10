@@ -34,6 +34,7 @@ export const assets = sqliteTable('assets', {
   userId: text('user_id').notNull().references(() => users.id),
   name: text('name').notNull(),
   type: text('type', { enum: ['stock', 'crypto', 'real-estate', 'cash', 'bonds', 'other'] }).notNull(),
+  ticker: text('ticker'),
   quantity: real('quantity').notNull(),
   unitPrice: real('unit_price').notNull(),
   buyPrice: real('buy_price'),
@@ -159,7 +160,22 @@ export const habits = sqliteTable('habits', {
 export const habitLogs = sqliteTable('habit_logs', {
   id: text('id').primaryKey(),
   habitId: text('habit_id').notNull().references(() => habits.id),
+  userId: text('user_id').notNull().references(() => users.id),
   date: text('date').notNull(),
   done: integer('done', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull(),
+})
+
+export const notes = sqliteTable('notes', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  title: text('title').notNull(),
+  content: text('content').notNull().default(''),
+  tags: text('tags').notNull().default('[]'),
+  date: text('date').notNull(),
+  pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+  linkedTodoId: text('linked_todo_id'),
+  linkedTransactionId: text('linked_transaction_id'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
 })

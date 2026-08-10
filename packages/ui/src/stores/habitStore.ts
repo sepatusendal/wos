@@ -78,7 +78,7 @@ export const useHabitStore = create<HabitState>((set, get) => ({
 
       // Fetch logs for the last 90 days — since the adapter only supports eq,
       // we fetch all logs and filter in memory (local app, manageable volume)
-      const allLogs = await adapter.db.select().from('habit_logs').all()
+      const allLogs = await adapter.db.select().from('habit_logs').where(eq('user_id', userId)).all()
       const cutoff = daysAgo(90)
       const habitIds = new Set(habits.map((h: Habit) => h.id))
       const logs = allLogs
@@ -188,8 +188,10 @@ export const useHabitStore = create<HabitState>((set, get) => ({
       } else {
         const id = generateId()
         const now = isoNow()
+        // Get userId from authStore (habit_logs need user_id for multi-user isolation)
+        const uid = (await import('../stores/authStore')).useAuthStore.getState().userId || ''
         await adapter.db.insert('habit_logs').values({
-          id, habit_id: habitId, date, done: done ? 1 : 0, created_at: now,
+          id, habit_id: habitId, user_id: uid, date, done: done ? 1 : 0, created_at: now,
         })
         const newLog: HabitLog = { id, habitId, date, done, createdAt: now }
         set((s) => ({ logs: [...s.logs, newLog] }))

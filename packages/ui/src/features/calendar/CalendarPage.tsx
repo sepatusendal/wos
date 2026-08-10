@@ -6,6 +6,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { NeubruBtn, NeubruCard, NeubruTag, NeubruCheckbox } from '../../components'
 import { createCurrencyFormatter } from '@wos/shared'
 import { formatShortDate, todayStr, getMonthRange } from '@wos/shared'
+import { fetchHolidays, holidaysByDate, type HolidayData } from '@wos/shared'
 import { toast } from 'sonner'
 
 const DAY_NAMES = ['SEN', 'SEL', 'RAB', 'KAM', 'JUM', 'SAB', 'MIN']
@@ -57,6 +58,7 @@ export default function CalendarPage() {
   const [viewMonth, setViewMonth] = useState(t.getMonth() + 1) // 1-indexed
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [holidays, setHolidays] = useState<HolidayData[]>([])
 
   useEffect(() => {
     if (!userId) return
@@ -67,6 +69,11 @@ export default function CalendarPage() {
         setLoaded(true)
       })
   }, [userId, fetchFinance, fetchTodo])
+
+  // Fetch holidays on mount — non-blocking, graceful degradation
+  useEffect(() => {
+    fetchHolidays().then(setHolidays).catch(() => {})
+  }, [])
 
   // Navigation handlers
   const goPrev = () => {
@@ -138,6 +145,9 @@ export default function CalendarPage() {
     return map
   }, [recurring, monthStart, monthEnd])
 
+  // Holiday lookup map for the current year
+  const holidayMap = useMemo(() => holidaysByDate(holidays), [holidays])
+
   // Month stats
   const monthIncome = useMemo(
     () => Object.values(txByDate).reduce((s, d) => s + d.income, 0),
@@ -156,6 +166,7 @@ export default function CalendarPage() {
   }
 
   // Selected date detail
+  const selectedHoliday = selectedDate ? holidayMap.get(selectedDate) ?? null : null
   const selectedTxs = selectedDate ? txByDate[selectedDate]?.txs ?? [] : []
   const selectedTodos = selectedDate ? todosByDate[selectedDate] ?? [] : []
   const selectedRecurring = selectedDate ? recurringByDate[selectedDate] ?? [] : []
@@ -267,9 +278,10 @@ export default function CalendarPage() {
             const info = txByDate[dateStr]
             const todoItems = todosByDate[dateStr] ?? []
             const recItems = recurringByDate[dateStr] ?? []
+            const holiday = holidayMap.get(dateStr)
             const isToday = dateStr === today
             const isSelected = dateStr === selectedDate
-            const hasContent = (info && (info.income > 0 || info.expense > 0)) || todoItems.length > 0 || recItems.length > 0
+            const hasContent = (info && (info.income > 0 || info.expense > 0)) || todoItems.length > 0 || recItems.length > 0 || !!holiday
 
             return (
               <div
@@ -279,9 +291,19 @@ export default function CalendarPage() {
                 } ${!hasContent ? 'opacity-50' : ''}`}
                 onClick={() => setSelectedDate(isSelected ? null : dateStr)}
               >
-                <span className={`text-sm font-extrabold leading-none ${isToday ? 'text-nb-red' : ''}`}>
+                <span className={`text-sm font-extrabold leading-none ${isToday || holiday ? 'text-nb-red' : ''}`}>
                   {d.getDate()}
                 </span>
+
+                {/* Holiday indicator */}
+                {holiday && (
+                  <span
+                    className="text-[10px] font-extrabold text-nb-red leading-tight truncate"
+                    title={holiday.name}
+                  >
+                    &#128308; {holiday.type === 'nasional' ? 'libur' : 'cuti'}
+                  </span>
+                )}
 
                 {info && info.income > 0 && (
                   <span className="text-[10px] font-extrabold text-nb-green leading-tight truncate">
@@ -313,6 +335,15 @@ export default function CalendarPage() {
         </div>
       </div>
 
+      {/* Legend */}
+      {holidays.length > 0 && (
+        <div className="flex items-center gap-3 mb-4 text-xs font-bold uppercase text-nb-fg-muted">
+          <span className="flex items-center gap-1">
+            <span className="text-sm">&#128308;</span> Tanggal Merah / Hari Libur
+          </span>
+        </div>
+      )}
+
       {/* Day Detail Panel */}
       {selectedDate && (
         <div className="border-2 border-nb-border shadow-nb-sm p-5 bg-white mb-6">
@@ -329,6 +360,19 @@ export default function CalendarPage() {
               + Transaksi
             </NeubruBtn>
           </div>
+
+          {/* Holiday info for selected date */}
+          {selectedHoliday && (
+            <div className="mb-4 p-3 border-2 border-nb-border bg-nb-red/10 flex items-center gap-2">
+              <span className="text-lg">&#128308;</span>
+              <div>
+                <div className="font-extrabold text-sm text-nb-red uppercase">{selectedHoliday.name}</div>
+                <div className="text-xs font-bold text-nb-fg-muted">
+                  {selectedHoliday.type === 'nasional' ? 'Hari Libur Nasional' : 'Cuti Bersama'}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Transactions for this day */}

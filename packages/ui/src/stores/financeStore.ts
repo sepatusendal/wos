@@ -131,6 +131,12 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     if (!adapter) return
 
     const tx = transactions.find((x) => x.id === id)
+
+    // Delete the transaction first; if this fails, nothing was changed
+    await adapter.db.delete('transactions').where(eq('id', id))
+    set((s) => ({ transactions: s.transactions.filter((x) => x.id !== id) }))
+
+    // Then reverse the account balance impact
     if (tx?.accountId) {
       const delta = tx.type === 'income' ? -tx.amount : tx.amount
       const acct = get().accounts.find((a) => a.id === tx.accountId)
@@ -140,9 +146,6 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
         set((s) => ({ accounts: s.accounts.map((a) => a.id === tx.accountId ? { ...a, balance: newBal } : a) }))
       }
     }
-
-    await adapter.db.delete('transactions').where(eq('id', id))
-    set((s) => ({ transactions: s.transactions.filter((x) => x.id !== id) }))
   },
 
   addBudget: async (userId, b) => {
@@ -176,8 +179,19 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
   },
 
   deleteAccount: async (id) => {
-    const { adapter } = get()
+    const { adapter, transactions } = get()
     if (!adapter) return
+    // Block deletion if the account still has linked transactions
+    const linked = transactions.filter((t) => t.accountId === id)
+    if (linked.length > 0) {
+      // Nullify account references instead of orphaning them
+      for (const tx of linked) {
+        await adapter.db.update('transactions').set({ account_id: null }).where(eq('id', tx.id))
+      }
+      set((s) => ({
+        transactions: s.transactions.map((t) => t.accountId === id ? { ...t, accountId: null } : t),
+      }))
+    }
     await adapter.db.delete('accounts').where(eq('id', id))
     set((s) => ({ accounts: s.accounts.filter((x) => x.id !== id) }))
   },
@@ -340,13 +354,12 @@ function advanceDate(dateStr: string, frequency: string): string {
       return fmtDate(date)
     }
     case 'monthly': {
-      // Use setMonth + clamp to avoid month-end overflow (Jan 31 → Feb 28, not Mar 3)
-      const targetMonth = m // 1-indexed target month after increment
-      const date = new Date(y, targetMonth, 1) // first day of next month
-      // Go back one day to get last day of current month, then add remaining days
-      const lastDayOfTarget = new Date(date.getFullYear(), targetMonth, 0).getDate()
-      const day = Math.min(d, lastDayOfTarget)
-      return `${date.getFullYear()}-${String(targetMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      // Advance one month with day clamping for short months (Jan 31 → Feb 28)
+      const date = new Date(y, m - 1, d)
+      date.setMonth(date.getMonth() + 1)
+      // If day overflowed to next month, clamp to last day of target month
+      if (date.getDate() !== d) date.setDate(0)
+      return fmtDate(date)
     }
     case 'yearly': {
       const date = new Date(y + 1, m - 1, d)

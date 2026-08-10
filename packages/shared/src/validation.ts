@@ -33,6 +33,7 @@ export const AssetSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
   type: AssetType,
+  ticker: z.string().nullable().default(null),
   quantity: z.number().positive(),
   unitPrice: z.number().positive(),
   buyPrice: z.number().positive().nullable().default(null),
@@ -178,3 +179,17 @@ export const HabitLogSchema = z.object({
   createdAt: z.string().datetime(),
 })
 export type HabitLog = z.infer<typeof HabitLogSchema>
+
+export const NoteSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1),
+  content: z.string().default(''),
+  tags: z.array(z.string()).default([]),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  pinned: z.boolean().default(false),
+  linkedTodoId: z.string().uuid().nullable().default(null),
+  linkedTransactionId: z.string().uuid().nullable().default(null),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+})
+export type Note = z.infer<typeof NoteSchema>

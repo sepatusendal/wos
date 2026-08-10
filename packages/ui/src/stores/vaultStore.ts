@@ -157,10 +157,11 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       // Re-encrypt all existing vault entries with new key
       if (oldKey) {
         const rawEntries = await adapter.db.select().from('vault_entries').where(eq('user_id', userId)).all()
+        let skippedCount = 0
         for (const raw of rawEntries as any[]) {
           let decryptedPassword = ''
           let decryptedNotes = ''
-          try { decryptedPassword = await decrypt(raw.password_encrypted, oldKey) } catch { continue }
+          try { decryptedPassword = await decrypt(raw.password_encrypted, oldKey) } catch { skippedCount++; continue }
           if (raw.notes_encrypted) {
             try { decryptedNotes = await decrypt(raw.notes_encrypted, oldKey) } catch {}
           }
@@ -172,6 +173,9 @@ export const useVaultStore = create<VaultState>((set, get) => ({
             notes_encrypted: newNotesEnc.ciphertext,
             notes_iv: newNotesEnc.iv,
           }).where(eq('id', raw.id))
+        }
+        if (skippedCount > 0) {
+          console.error(`[vault] ${skippedCount} entries could not be re-encrypted and are now inaccessible`)
         }
       }
 

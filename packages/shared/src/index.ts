@@ -1,3 +1,7 @@
 export * from './validation'
 export * from './crypto'
 export * from './format'
+export * from './holidays'
+export * from './market'
+export * from './weather'
+export * from './quote'

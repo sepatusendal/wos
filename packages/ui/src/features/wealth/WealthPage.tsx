@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag } from '../../components'
 import { formatDate } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
+import { toast } from 'sonner'
 import type { Asset, AssetType } from '@wos/shared'
 
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
@@ -18,7 +19,7 @@ const TYPE_COLORS: Record<string, 'yellow' | 'blue' | 'green' | 'pink' | 'orange
 export default function WealthPage() {
   const userId = useAuthStore((s) => s.userId)
   const formatCurrency = useFormatCurrency()
-  const { assets, fetchAll, addAsset, editAsset, deleteAsset, getPortfolioStats } = useWealthStore()
+  const { assets, fetchAll, addAsset, editAsset, deleteAsset, getPortfolioStats, refreshPrices, refreshingPrices } = useWealthStore()
   const [showModal, setShowModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -27,6 +28,7 @@ export default function WealthPage() {
   const [unitPrice, setUnitPrice] = useState('')
   const [buyPrice, setBuyPrice] = useState('')
   const [buyDate, setBuyDate] = useState('')
+  const [ticker, setTicker] = useState('')
   const [notes, setNotes] = useState('')
 
   useEffect(() => { if (userId) fetchAll(userId) }, [userId, fetchAll])
@@ -48,17 +50,17 @@ export default function WealthPage() {
     return Object.entries(map).map(([t, v]) => ({ type: t, percent: (v / total) * 100, value: v })).sort((a, b) => b.percent - a.percent)
   }, [assets])
 
-  const openAdd = () => { setEditId(null); setName(''); setType('stock'); setQuantity(''); setUnitPrice(''); setBuyPrice(''); setBuyDate(''); setNotes(''); setShowModal(true) }
-  const openEdit = (a: Asset) => { setEditId(a.id); setName(a.name); setType(a.type); setQuantity(String(a.quantity)); setUnitPrice(String(a.unitPrice)); setBuyPrice(a.buyPrice != null ? String(a.buyPrice) : ''); setBuyDate(a.buyDate ?? ''); setNotes(a.notes ?? ''); setShowModal(true) }
+  const openAdd = () => { setEditId(null); setName(''); setType('stock'); setTicker(''); setQuantity(''); setUnitPrice(''); setBuyPrice(''); setBuyDate(''); setNotes(''); setShowModal(true) }
+  const openEdit = (a: Asset) => { setEditId(a.id); setName(a.name); setType(a.type); setTicker(a.ticker ?? ''); setQuantity(String(a.quantity)); setUnitPrice(String(a.unitPrice)); setBuyPrice(a.buyPrice != null ? String(a.buyPrice) : ''); setBuyDate(a.buyDate ?? ''); setNotes(a.notes ?? ''); setShowModal(true) }
 
   const save = async () => {
     if (!userId || !name || !quantity || !unitPrice) return
     const bp = buyPrice ? Number(buyPrice) : null
     const bd = buyDate || null
     if (editId) {
-      await editAsset({ id: editId, name, type, quantity: Number(quantity), unitPrice: Number(unitPrice), notes, buyPrice: bp, buyDate: bd })
+      await editAsset({ id: editId, name, type, ticker: ticker || null, quantity: Number(quantity), unitPrice: Number(unitPrice), notes, buyPrice: bp, buyDate: bd })
     } else {
-      await addAsset(userId, { name, type, quantity: Number(quantity), unitPrice: Number(unitPrice), buyPrice: bp, buyDate: bd, notes } as any)
+      await addAsset(userId, { name, type, ticker: ticker || null, quantity: Number(quantity), unitPrice: Number(unitPrice), buyPrice: bp, buyDate: bd, notes } as any)
     }
     setShowModal(false)
   }
@@ -67,7 +69,17 @@ export default function WealthPage() {
     <div>
       <div className="flex items-start justify-between mb-7 gap-4 flex-wrap">
         <h2 className="text-[1.8rem]">📈 Wealth</h2>
-        <NeubruBtn color="blue" onClick={openAdd}>+ Aset</NeubruBtn>
+        <div className="flex gap-2.5">
+          <NeubruBtn color="orange" onClick={async () => {
+            if (!userId) return
+            const result = await refreshPrices(userId)
+            if (result.updated > 0) toast.success(`✅ Updated ${result.updated} prices${result.failed > 0 ? `, ${result.failed} failed` : ''}`)
+            else toast.error(result.failed > 0 ? `Failed to update ${result.failed} prices` : 'No tickered assets to update')
+          }} disabled={refreshingPrices}>
+            {refreshingPrices ? '⏳ Refreshing...' : '🔄 Refresh Prices'}
+          </NeubruBtn>
+          <NeubruBtn color="blue" onClick={openAdd}>+ Aset</NeubruBtn>
+        </div>
       </div>
 
       <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-5 mb-7">
@@ -187,6 +199,10 @@ export default function WealthPage() {
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Tipe</label>
             <NeubruSelect value={type} onChange={(v) => setType(v as AssetType)} options={ASSET_TYPES} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Ticker</label>
+            <NeubruInput value={ticker} onChange={setTicker} placeholder="BBCA, BTC, TLKM..." />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
