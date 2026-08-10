@@ -281,7 +281,7 @@ export default function FinancialPet() {
             t.date.startsWith(thisMonthKey),
         )
         .reduce((s, t) => s + t.amount, 0)
-      return { category: b.category, pct: Math.round((spent / b.limit) * 100) }
+      return { category: b.category, pct: b.limit > 0 ? Math.round((spent / b.limit) * 100) : 0 }
     })
 
     // Savings rate

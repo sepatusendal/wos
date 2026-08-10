@@ -65,13 +65,19 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   deleteTodo: async (id) => {
     const { adapter } = get()
     if (!adapter) return
-    // Cascade: delete subtasks first
-    const subtaskIds = get().todos.filter((t) => t.parentId === id).map((t) => t.id)
-    for (const sid of subtaskIds) {
-      await adapter.db.delete('todos').where(eq('id', sid))
+    const allIds = new Set<string>([id])
+    const stack = [id]
+    while (stack.length > 0) {
+      const current = stack.pop()!
+      get().todos.filter((t) => t.parentId === current).forEach((child) => {
+        allIds.add(child.id)
+        stack.push(child.id)
+      })
     }
-    await adapter.db.delete('todos').where(eq('id', id))
-    set((s) => ({ todos: s.todos.filter((x) => x.id !== id && !subtaskIds.includes(x.id)) }))
+    for (const tid of [...allIds]) {
+      await adapter.db.delete('todos').where(eq('id', tid))
+    }
+    set((s) => ({ todos: s.todos.filter((x) => !allIds.has(x.id)) }))
   },
 
   toggleComplete: async (id) => {

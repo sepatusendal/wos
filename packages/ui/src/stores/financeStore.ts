@@ -136,6 +136,10 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     if (!adapter) return
 
     const tx = transactions.find((x) => x.id === id)
+
+    await adapter.db.delete('transactions').where(eq('id', id))
+    set((s) => ({ transactions: s.transactions.filter((x) => x.id !== id) }))
+
     if (tx?.accountId) {
       const delta = tx.type === 'income' ? -tx.amount : tx.amount
       const acct = get().accounts.find((a) => a.id === tx.accountId)
@@ -145,9 +149,6 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
         set((s) => ({ accounts: s.accounts.map((a) => a.id === tx.accountId ? { ...a, balance: newBal } : a) }))
       }
     }
-
-    await adapter.db.delete('transactions').where(eq('id', id))
-    set((s) => ({ transactions: s.transactions.filter((x) => x.id !== id) }))
   },
 
   addBudget: async (userId, b) => {
@@ -361,13 +362,10 @@ function advanceDate(dateStr: string, frequency: string): string {
       return fmtDate(date)
     }
     case 'monthly': {
-      // Use setMonth + clamp to avoid month-end overflow (Jan 31 → Feb 28, not Mar 3)
-      const targetMonth = m // 1-indexed target month after increment
-      const date = new Date(y, targetMonth, 1) // first day of next month
-      // Go back one day to get last day of current month, then add remaining days
-      const lastDayOfTarget = new Date(date.getFullYear(), targetMonth, 0).getDate()
-      const day = Math.min(d, lastDayOfTarget)
-      return `${date.getFullYear()}-${String(targetMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      const date = new Date(y, m - 1, d)
+      date.setMonth(date.getMonth() + 1)
+      if (date.getDate() !== d) date.setDate(0)
+      return fmtDate(date)
     }
     case 'yearly': {
       const date = new Date(y + 1, m - 1, d)

@@ -66,10 +66,9 @@ export default function FortuneTeller() {
       .filter((t) => t.type === 'expense' && t.date.startsWith(currentMonth))
       .reduce((s, t) => s + t.amount, 0)
 
-    if (currentExpense > 0 && avgExpense > 0) {
-      const prevAvg = validExpenses.slice(0, -1).reduce((s, e) => s + e, 0) / (validExpenses.length - 1 || 1)
-      const prevPredicted = Math.round(prevAvg * (0.95 + Math.random() * 0.1))
-      accuracy = Math.max(0, Math.round((1 - Math.abs(currentExpense - prevPredicted) / currentExpense) * 100))
+    if (currentExpense > 0 && validExpenses.length >= 2) {
+      const prevMonthActual = validExpenses[validExpenses.length - 2] ?? 0
+      accuracy = prevMonthActual > 0 ? Math.max(0, Math.round((1 - Math.abs(currentExpense - prevMonthActual) / prevMonthActual) * 100)) : 0
     }
 
     return {

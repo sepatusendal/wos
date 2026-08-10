@@ -88,7 +88,8 @@ export default function NotesPage() {
     if (editId) {
       const uid = useAuthStore.getState().userId
       if (!uid) return
-      editNote({ id: editId, title: title.trim(), content, tags: [], date: todayStr(), pinned: false })
+      const existing = useNotesStore.getState().notes.find((n) => n.id === editId)
+      editNote({ id: editId, title: title.trim(), content, tags: existing?.tags ?? [], date: existing?.date ?? todayStr(), pinned: existing?.pinned ?? false })
     } else {
       const uid = useAuthStore.getState().userId
       if (!uid) return
