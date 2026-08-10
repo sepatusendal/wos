@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "outDir": "./dist",
+    "paths": {
+      "@wos/shared": ["../../packages/shared/src"],
+      "@wos/db": ["../../packages/db/src"],
+      "@wos/ui": ["../../packages/ui/src"]
+    }
+  },
+  "include": ["src", "../../packages/shared/src", "../../packages/db/src", "../../packages/ui/src"]
+}

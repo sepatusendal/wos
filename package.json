@@ -1,0 +1,22 @@
+{
+  "name": "wos",
+  "private": true,
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "clean": "turbo clean",
+    "web": "npm run dev -w apps/web",
+    "desktop": "npm run dev -w apps/desktop"
+  },
+  "devDependencies": {
+    "@next/swc-darwin-x64": "^16.3.0",
+    "turbo": "^2.6.3",
+    "typescript": "~5.9.3"
+  }
+}

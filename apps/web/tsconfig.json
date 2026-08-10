@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "../..",
+    "composite": false,
+    "jsx": "preserve",
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@wos/shared": ["../../packages/shared/src"],
+      "@wos/db": ["../../packages/db/src"],
+      "@wos/ui": ["../../packages/ui/src"]
+    }
+  },
+  "include": ["src", "../../packages/shared/src", "../../packages/db/src", "../../packages/ui/src", "next-env.d.ts"]
+}

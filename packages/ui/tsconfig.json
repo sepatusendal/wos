@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "paths": {
+      "@wos/shared": ["../shared/src"],
+      "@wos/db": ["../db/src"]
+    }
+  },
+  "include": ["src"]
+}
