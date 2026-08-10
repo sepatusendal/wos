@@ -212,11 +212,13 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS habit_logs (
       id TEXT PRIMARY KEY,
       habit_id TEXT NOT NULL REFERENCES habits(id),
+      user_id TEXT NOT NULL REFERENCES users(id),
       date TEXT NOT NULL,
       done INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     )
   `)
+  try { await client.execute(`ALTER TABLE habit_logs ADD COLUMN user_id TEXT`) } catch {}
   await client.execute(`
     CREATE TABLE IF NOT EXISTS notes (
       id TEXT PRIMARY KEY,
