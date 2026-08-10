@@ -160,6 +160,7 @@ export const habits = sqliteTable('habits', {
 export const habitLogs = sqliteTable('habit_logs', {
   id: text('id').primaryKey(),
   habitId: text('habit_id').notNull().references(() => habits.id),
+  userId: text('user_id').notNull().references(() => users.id),
   date: text('date').notNull(),
   done: integer('done', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull(),

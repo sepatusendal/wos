@@ -63,8 +63,6 @@ async function ensureSchema() {
   try { await client.execute(`ALTER TABLE transactions ADD COLUMN flexibility TEXT NOT NULL DEFAULT 'flexible'`) } catch {}
   try { await client.execute(`ALTER TABLE users ADD COLUMN vault_verify TEXT`) } catch {}
   try { await client.execute(`ALTER TABLE users ADD COLUMN session_token TEXT`) } catch {}
-  try { await client.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
-  try { await client.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
   await client.execute(`
     CREATE TABLE IF NOT EXISTS budgets (
       id TEXT PRIMARY KEY,
@@ -81,11 +79,15 @@ async function ensureSchema() {
       type TEXT NOT NULL,
       quantity REAL NOT NULL,
       unit_price REAL NOT NULL,
+      buy_price REAL,
+      buy_date TEXT,
       notes TEXT NOT NULL DEFAULT '',
       last_updated TEXT NOT NULL,
       created_at TEXT NOT NULL
     )
   `)
+  try { await client.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
+  try { await client.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
   await client.execute(`
     CREATE TABLE IF NOT EXISTS net_worth_entries (
       id TEXT PRIMARY KEY,
