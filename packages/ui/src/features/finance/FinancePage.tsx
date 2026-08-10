@@ -270,7 +270,7 @@ export default function FinancePage() {
   const checkBudgetAlert = (cat: string, newAmount: number, oldAmount = 0) => {
     const fresh = useFinanceStore.getState()
     const budget = fresh.budgets.find((b) => b.category === cat)
-    if (!budget) return
+    if (!budget || budget.limit <= 0) return
     const currentSpent = fresh.transactions.filter((t) => t.type === 'expense' && t.category === cat).reduce((s, t) => s + t.amount, 0)
     const totalAfter = currentSpent - oldAmount + newAmount
     const pct = Math.round((totalAfter / budget.limit) * 100)
