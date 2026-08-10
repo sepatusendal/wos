@@ -2,14 +2,94 @@ import { useEffect, useState } from 'react'
 import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore } from '@wos/ui'
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+
+// ── Window State Persistence ──────────────────────────────
+// Fixes #4: macOS window doesn't remember position/size between sessions
+
+const WINDOW_STATE_KEY = 'wos.desktop.windowState'
+
+interface WindowState {
+  x: number | null
+  y: number | null
+  width: number
+  height: number
+  maximized: boolean
+}
+
+function loadWindowState(): WindowState | null {
+  try {
+    const raw = localStorage.getItem(WINDOW_STATE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as WindowState
+  } catch {
+    return null
+  }
+}
+
+function saveWindowState(state: WindowState) {
+  try {
+    localStorage.setItem(WINDOW_STATE_KEY, JSON.stringify(state))
+  } catch {
+    // localStorage may be unavailable in some Tauri contexts
+  }
+}
+
+async function restoreWindowState() {
+  const saved = loadWindowState()
+  if (!saved) return
+
+  try {
+    const win = getCurrentWindow()
+    if (saved.x !== null && saved.y !== null) {
+      await win.setPosition({ x: saved.x, y: saved.y })
+    }
+    await win.setSize({ width: saved.width, height: saved.height })
+    if (saved.maximized) {
+      await win.maximize()
+    }
+  } catch {
+    // Window API may fail — silently fall back to defaults
+  }
+}
+
+function attachWindowStateListeners() {
+  const win = getCurrentWindow()
+
+  // Debounced save on resize/move to avoid excessive writes
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  const debouncedSave = () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(async () => {
+      try {
+        const pos = await win.outerPosition()
+        const size = await win.outerSize()
+        const maximized = await win.isMaximized()
+        saveWindowState({ x: pos.x, y: pos.y, width: size.width, height: size.height, maximized })
+      } catch { /* ignore */ }
+    }, 300)
+  }
+
+  win.onResized(debouncedSave)
+  win.onMoved(debouncedSave)
+}
 
 export default function App() {
   const [adapterReady, setAdapterReady] = useState(false)
+  const [windowReady, setWindowReady] = useState(false)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const setAdapter = useAuthStore((s) => s.setAdapter)
   const init = useAuthStore((s) => s.init)
 
   const [error, setError] = useState<string | null>(null)
+
+  // Restore saved window position/size on mount
+  useEffect(() => {
+    restoreWindowState().then(() => {
+      attachWindowStateListeners()
+      setWindowReady(true)
+    })
+  }, [])
 
   useEffect(() => {
     Database.load('sqlite:wos.db').then(async (tauriDb) => {
@@ -42,10 +122,12 @@ export default function App() {
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS assets (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL,
-            quantity REAL NOT NULL, unit_price REAL NOT NULL, notes TEXT NOT NULL DEFAULT '',
-            last_updated TEXT NOT NULL, created_at TEXT NOT NULL
+            quantity REAL NOT NULL, unit_price REAL NOT NULL, buy_price REAL, buy_date TEXT,
+            notes TEXT NOT NULL DEFAULT '', last_updated TEXT NOT NULL, created_at TEXT NOT NULL
           )
         `)
+        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS net_worth_entries (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, date TEXT NOT NULL,
