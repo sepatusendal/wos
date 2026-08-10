@@ -1,42 +1,5 @@
 import type { Condition, OrderBy, DatabaseAdapter, QueryBuilder } from '../adapter'
 
-/**
- * Encode file paths for safe use with Tauri SQL plugin.
- *
- * On Windows, Tauri's SQLite plugin rejects paths containing non-ASCII
- * characters (e.g. CJK, Arabic, accented Latin like "José").
- *
- * We percent-encode the path so the OS-native APIs receive only ASCII,
- * then decode internally when resolving the database handle.
- *
- * @see https://github.com/sepatusendal/wos/issues/6
- */
-function encodePath(raw: string): string {
-  try {
-    // Only encode if we detect non-ASCII chars
-    if (/[^\x00-\x7F]/.test(raw)) {
-      return raw
-        .split('/')
-        .map((segment) => encodeURIComponent(segment))
-        .join('/')
-    }
-    return raw
-  } catch {
-    return raw // fallback — let Tauri's error handling take over
-  }
-}
-
-function decodePath(encoded: string): string {
-  try {
-    return encoded
-      .split('/')
-      .map((segment) => decodeURIComponent(segment))
-      .join('/')
-  } catch {
-    return encoded
-  }
-}
-
 const ALLOWED_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 const ALLOWED_OPERATORS = new Set(['=', '!=', '<', '<=', '>', '>=', 'LIKE', 'ILIKE', 'IN', 'NOT IN', 'IS', 'IS NOT'])
 
@@ -81,9 +44,7 @@ function formatOrderClause(orders: OrderBy[]): string {
   return orders.map((o) => `${sanitizeIdentifier(o.column)} ${sanitizeDirection(o.direction)}`).join(', ')
 }
 
-export function createTauriSqlAdapter(tauriDb: any, dbPath?: string): DatabaseAdapter {
-  // Normalize path for cross-platform safety (see encodePath doc above)
-  const resolvedPath = dbPath ? encodePath(dbPath) : undefined
+export function createTauriSqlAdapter(tauriDb: any, _dbPath?: string): DatabaseAdapter {
   const db: QueryBuilder = {
     select(...columns: string[]) {
       const colNames = columns.length > 0 ? columns.map(sanitizeIdentifier).join(', ') : '*'
