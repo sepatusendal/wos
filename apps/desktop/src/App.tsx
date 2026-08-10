@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore } from '@wos/ui'
+import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore } from '@wos/ui'
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -109,11 +109,13 @@ export default function App() {
           CREATE TABLE IF NOT EXISTS transactions (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL,
             amount REAL NOT NULL, category TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-            date TEXT NOT NULL, account_id TEXT, created_at TEXT NOT NULL
+            date TEXT NOT NULL, account_id TEXT, flexibility TEXT NOT NULL DEFAULT 'flexible',
+            created_at TEXT NOT NULL
           )
         `)
         // Migration: add account_id if upgrading from older schema
         try { await tauriDb.execute(`ALTER TABLE transactions ADD COLUMN account_id TEXT`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE transactions ADD COLUMN flexibility TEXT NOT NULL DEFAULT 'flexible'`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS budgets (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, category TEXT NOT NULL, "limit" REAL NOT NULL
@@ -214,6 +216,7 @@ export default function App() {
         useSettingsStore.getState().setAdapter(adapter)
         useSubscriptionStore.getState().setAdapter(adapter)
         useHabitStore.getState().setAdapter(adapter)
+        useAchievementStore.getState().setAdapter(adapter)
         setAdapterReady(true)
       } catch (err: any) {
         console.error('Failed to initialize database:', err)

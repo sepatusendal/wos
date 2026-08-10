@@ -8,7 +8,7 @@ const client = createClient({ url: TURSO_URL, authToken: TURSO_AUTH_TOKEN })
 
 const tables: Record<string, string[]> = {
   users: ['id', 'username', 'password_hash', 'vault_salt', 'vault_verify', 'session_token', 'created_at'],
-  transactions: ['id', 'user_id', 'type', 'amount', 'category', 'description', 'date', 'account_id', 'created_at'],
+  transactions: ['id', 'user_id', 'type', 'amount', 'category', 'description', 'date', 'account_id', 'flexibility', 'created_at'],
   budgets: ['id', 'user_id', 'category', 'limit'],
   assets: ['id', 'user_id', 'name', 'type', 'quantity', 'unit_price', 'buy_price', 'buy_date', 'notes', 'last_updated', 'created_at'],
   net_worth_entries: ['id', 'user_id', 'date', 'total_assets', 'total_liabilities', 'net_worth', 'cash', 'investments', 'property', 'other_assets', 'mortgage', 'loans', 'credit_cards', 'other_liabilities', 'created_at'],
@@ -54,10 +54,12 @@ async function ensureSchema() {
       description TEXT NOT NULL DEFAULT '',
       date TEXT NOT NULL,
       account_id TEXT,
+      flexibility TEXT NOT NULL DEFAULT 'flexible',
       created_at TEXT NOT NULL
     )
   `)
   try { await client.execute(`ALTER TABLE transactions ADD COLUMN account_id TEXT`) } catch {}
+  try { await client.execute(`ALTER TABLE transactions ADD COLUMN flexibility TEXT NOT NULL DEFAULT 'flexible'`) } catch {}
   try { await client.execute(`ALTER TABLE users ADD COLUMN vault_verify TEXT`) } catch {}
   try { await client.execute(`ALTER TABLE users ADD COLUMN session_token TEXT`) } catch {}
   try { await client.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}

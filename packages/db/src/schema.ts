@@ -19,6 +19,7 @@ export const transactions = sqliteTable('transactions', {
   description: text('description').notNull().default(''),
   date: text('date').notNull(),
   accountId: text('account_id'),
+  flexibility: text('flexibility', { enum: ['fixed', 'flexible', 'discretionary'] }).notNull().default('flexible'),
   createdAt: text('created_at').notNull(),
 })
 

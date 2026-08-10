@@ -3,6 +3,9 @@ import { z } from 'zod'
 export const TransactionType = z.enum(['income', 'expense'])
 export type TransactionType = z.infer<typeof TransactionType>
 
+export const Flexibility = z.enum(['fixed', 'flexible', 'discretionary'])
+export type Flexibility = z.infer<typeof Flexibility>
+
 export const AssetType = z.enum(['stock', 'crypto', 'real-estate', 'cash', 'bonds', 'other'])
 export type AssetType = z.infer<typeof AssetType>
 
@@ -20,6 +23,7 @@ export const TransactionSchema = z.object({
   description: z.string().default(''),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   accountId: z.string().uuid().nullable().default(null),
+  flexibility: Flexibility.default('flexible'),
   createdAt: z.string().datetime(),
 })
 
@@ -178,3 +182,14 @@ export const HabitLogSchema = z.object({
   createdAt: z.string().datetime(),
 })
 export type HabitLog = z.infer<typeof HabitLogSchema>
+
+export const NoteSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1),
+  content: z.string().default(''),
+  linkedTransactionId: z.string().uuid().nullable().default(null),
+  linkedTodoId: z.string().uuid().nullable().default(null),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+})
+export type Note = z.infer<typeof NoteSchema>

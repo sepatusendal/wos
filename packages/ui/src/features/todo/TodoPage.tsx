@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTodoStore } from '../../stores/todoStore'
+import { useNotesStore } from '../../stores/notesStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag, NeubruCheckbox } from '../../components'
 import { toast } from 'sonner'
@@ -31,6 +32,19 @@ export default function TodoPage() {
 
   const allTags = useMemo(() => { const s = new Set<string>(); todos.forEach((t) => t.tags.forEach((tag) => s.add(tag))); return [...s] }, [todos])
   const completedCount = todos.filter((t) => t.completed).length
+
+  // Linked notes per todo
+  const allNotes = useNotesStore((s) => s.notes)
+  const linkedNotesByTodo = useMemo(() => {
+    const map = new Map<string, { id: string; title: string }[]>()
+    allNotes.forEach((n) => {
+      if (n.linkedTodoId) {
+        if (!map.has(n.linkedTodoId)) map.set(n.linkedTodoId, [])
+        map.get(n.linkedTodoId)!.push({ id: n.id, title: n.title })
+      }
+    })
+    return map
+  }, [allNotes])
 
   const filtered = useMemo(() => {
     let r = todos
@@ -149,6 +163,17 @@ export default function TodoPage() {
                           📋 {subsDone}/{subs.length}
                         </span>
                       )}
+                      {linkedNotesByTodo.has(t.id) && (() => {
+                        const linkedNotes = linkedNotesByTodo.get(t.id)!
+                        return (
+                          <span className="relative group cursor-help" title={linkedNotes.map((n) => n.title).join('\n')}>
+                            <span className="font-bold text-nb-purple">📝</span>
+                            <span className="absolute bottom-full left-0 mb-1 hidden group-hover:block bg-nb-bg border-2 border-nb-border px-2 py-1 text-xs font-bold whitespace-nowrap shadow-nb-sm z-50 max-w-[250px] truncate">
+                              {linkedNotes.map((n) => n.title).join(' | ')}
+                            </span>
+                          </span>
+                        )
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -171,6 +196,14 @@ export default function TodoPage() {
                             <NeubruTag label={PRIORITY.find((p) => p.value === sub.priority)?.label || sub.priority} color={PRIO_COLORS[sub.priority]} />
                             {sub.tags.map((tag) => <NeubruTag key={tag} label={`#${tag}`} />)}
                             {sub.dueDate && <span className="text-xs text-nb-fg-muted font-semibold">📅 {sub.dueDate}</span>}
+                            {linkedNotesByTodo.has(sub.id) && (
+                              <span className="relative group cursor-help" title={linkedNotesByTodo.get(sub.id)!.map((n) => n.title).join('\n')}>
+                                <span className="font-bold text-nb-purple">📝</span>
+                                <span className="absolute bottom-full left-0 mb-1 hidden group-hover:block bg-nb-bg border-2 border-nb-border px-2 py-1 text-xs font-bold whitespace-nowrap shadow-nb-sm z-50 max-w-[250px] truncate">
+                                  {linkedNotesByTodo.get(sub.id)!.map((n) => n.title).join(' | ')}
+                                </span>
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

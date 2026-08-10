@@ -12,10 +12,11 @@ interface FinanceState {
   savingsGoals: SavingsGoal[]
   recurring: RecurringTransaction[]
   loading: boolean
+  budgetRollover: Record<string, number>
   setAdapter: (adapter: DatabaseAdapter) => void
   fetchAll: (userId: string) => Promise<void>
   addTransaction: (userId: string, t: Omit<Transaction, 'id' | 'createdAt'>) => Promise<void>
-  editTransaction: (t: { id: string; type: string; amount: number; category: string; description: string; date: string; accountId: string | null }) => Promise<void>
+  editTransaction: (t: { id: string; type: string; amount: number; category: string; description: string; date: string; accountId: string | null; flexibility?: string }) => Promise<void>
   deleteTransaction: (id: string) => Promise<void>
   addBudget: (userId: string, b: Omit<Budget, 'id'>) => Promise<void>
   deleteBudget: (id: string) => Promise<void>
@@ -31,6 +32,7 @@ interface FinanceState {
   deleteRecurring: (id: string) => Promise<void>
   transferBetweenAccounts: (userId: string, fromAccountId: string, toAccountId: string, amount: number, description: string) => Promise<void>
   processRecurring: (userId: string) => Promise<string[]>
+  computeBudgetRollover: () => void
 }
 
 export const useFinanceStore = create<FinanceState>((set, get) => ({
@@ -41,6 +43,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
   savingsGoals: [],
   recurring: [],
   loading: false,
+  budgetRollover: {},
 
   setAdapter: (adapter) => set({ adapter }),
 
@@ -64,6 +67,8 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
         recurring: recData.map(formatRecurring),
         loading: false,
       })
+      // Compute rollover after data is loaded
+      get().computeBudgetRollover()
     } catch (err) {
       console.error('[financeStore] fetchAll failed:', err)
       set({ loading: false })
@@ -74,7 +79,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const { adapter } = get()
     if (!adapter) return
     const id = generateId()
-    await adapter.db.insert('transactions').values({ id, user_id: userId, type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId ?? null, created_at: isoNow() })
+    await adapter.db.insert('transactions').values({ id, user_id: userId, type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId ?? null, flexibility: (t as any).flexibility ?? 'flexible', created_at: isoNow() })
 
     if (t.accountId) {
       const delta = t.type === 'income' ? t.amount : -t.amount
@@ -95,7 +100,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
 
     const oldTx = transactions.find((x) => x.id === t.id)
 
-    await adapter.db.update('transactions').set({ type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId }).where(eq('id', t.id))
+    await adapter.db.update('transactions').set({ type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId, flexibility: t.flexibility ?? 'flexible' }).where(eq('id', t.id))
 
     if (oldTx) {
       const reverseOld = oldTx.accountId ? (oldTx.type === 'income' ? -oldTx.amount : oldTx.amount) : 0
@@ -121,7 +126,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
 
     set((s) => ({
       transactions: s.transactions.map((x) =>
-        x.id === t.id ? { ...x, type: t.type as Transaction['type'], amount: t.amount, category: t.category, description: t.description, date: t.date, accountId: t.accountId } : x
+        x.id === t.id ? { ...x, type: t.type as Transaction['type'], amount: t.amount, category: t.category, description: t.description, date: t.date, accountId: t.accountId, flexibility: (t.flexibility ?? x.flexibility ?? 'flexible') as Transaction['flexibility'] } : x
       ),
     }))
   },
@@ -259,8 +264,8 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const today = todayStr()
     const txId1 = generateId()
     const txId2 = generateId()
-    await adapter.db.insert('transactions').values({ id: txId1, user_id: userId, type: 'expense', amount, category: 'Transfer', description: `Transfer to ${toAcct.name}${description ? ': ' + description : ''}`, date: today, account_id: fromAccountId, created_at: isoNow() })
-    await adapter.db.insert('transactions').values({ id: txId2, user_id: userId, type: 'income', amount, category: 'Transfer', description: `Transfer from ${fromAcct.name}${description ? ': ' + description : ''}`, date: today, account_id: toAccountId, created_at: isoNow() })
+    await adapter.db.insert('transactions').values({ id: txId1, user_id: userId, type: 'expense', amount, category: 'Transfer', description: `Transfer to ${toAcct.name}${description ? ': ' + description : ''}`, date: today, account_id: fromAccountId, flexibility: 'fixed', created_at: isoNow() })
+    await adapter.db.insert('transactions').values({ id: txId2, user_id: userId, type: 'income', amount, category: 'Transfer', description: `Transfer from ${fromAcct.name}${description ? ': ' + description : ''}`, date: today, account_id: toAccountId, flexibility: 'fixed', created_at: isoNow() })
 
     set((s) => ({
       accounts: s.accounts.map((a) => {
@@ -288,7 +293,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
         const txId = generateId()
         await adapter.db.insert('transactions').values({
           id: txId, user_id: userId, type: r.type, amount: r.amount, category: r.category,
-          description: `[Recurring] ${r.name}`, date: currentNextDate, account_id: null, created_at: isoNow(),
+          description: `[Recurring] ${r.name}`, date: currentNextDate, account_id: null, flexibility: 'flexible', created_at: isoNow(),
         })
         currentNextDate = advanceDate(currentNextDate, r.frequency)
         insertedCount++
@@ -302,10 +307,26 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     if (processed.length > 0) await get().fetchAll(userId)
     return processed
   },
+
+  computeBudgetRollover: () => {
+    const { budgets, transactions } = get()
+    const now = new Date()
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const lastMonthKey = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`
+    const rollover: Record<string, number> = {}
+    budgets.forEach((b) => {
+      const spent = transactions
+        .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(lastMonthKey))
+        .reduce((s, t) => s + t.amount, 0)
+      const unused = Math.max(0, b.limit - spent)
+      if (unused > 0) rollover[b.category] = unused
+    })
+    set({ budgetRollover: rollover })
+  },
 }))
 
 function formatTx(t: any): Transaction {
-  return { id: t.id, type: t.type, amount: t.amount, category: t.category, description: t.description ?? '', date: t.date, accountId: t.account_id ?? null, createdAt: t.created_at }
+  return { id: t.id, type: t.type, amount: t.amount, category: t.category, description: t.description ?? '', date: t.date, accountId: t.account_id ?? null, flexibility: t.flexibility ?? 'flexible', createdAt: t.created_at }
 }
 
 function formatBudget(b: any): Budget {

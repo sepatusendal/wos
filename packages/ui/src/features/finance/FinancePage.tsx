@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { toast } from 'sonner'
 import { useFinanceStore } from '../../stores/financeStore'
+import { useNotesStore } from '../../stores/notesStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag } from '../../components'
 import { formatDate, todayStr, formatShortDate, formatMonthShort } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
-import type { Transaction, RecurringTransaction } from '@wos/shared'
+import type { RecurringTransaction } from '@wos/shared'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { exportCSV, generatePDFProps } from '../../utils/export'
 import { BlobProvider } from '@react-pdf/renderer'
@@ -30,6 +31,7 @@ export default function FinancePage() {
   const formatCurrency = useFormatCurrency()
   const {
     transactions, budgets, accounts, savingsGoals, recurring,
+    budgetRollover,
     fetchAll, addTransaction, editTransaction, deleteTransaction,
     addBudget, deleteBudget,
     addAccount, editAccount, deleteAccount,
@@ -66,6 +68,7 @@ export default function FinancePage() {
   const [desc, setDesc] = useState('')
   const [date, setDate] = useState(todayStr())
   const [txAccountId, setTxAccountId] = useState<string>('')
+  const [flexibility, setFlexibility] = useState<'fixed' | 'flexible' | 'discretionary'>('flexible')
   const [budgetCat, setBudgetCat] = useState('Makan')
   const [budgetLimit, setBudgetLimit] = useState('')
 
@@ -152,6 +155,19 @@ export default function FinancePage() {
 
   const uniqueCategories = useMemo(() => [...new Set(transactions.map((t) => t.category))].sort(), [transactions])
 
+  // Linked notes per transaction
+  const allNotes = useNotesStore((s) => s.notes)
+  const linkedNotesByTx = useMemo(() => {
+    const map = new Map<string, { id: string; title: string }[]>()
+    allNotes.forEach((n) => {
+      if (n.linkedTransactionId) {
+        if (!map.has(n.linkedTransactionId)) map.set(n.linkedTransactionId, [])
+        map.get(n.linkedTransactionId)!.push({ id: n.id, title: n.title })
+      }
+    })
+    return map
+  }, [allNotes])
+
   const activeFilterCount = [searchQuery, filterAccount, filterCategory, monthFilter].filter(Boolean).length + (filter !== 'all' ? 1 : 0)
 
   const budgetSpending = useMemo(() => {
@@ -161,16 +177,71 @@ export default function FinancePage() {
     })
   }, [budgets, transactions])
 
-  const openAdd = () => { setEditId(null); setType('expense'); setAmount(''); setCategory('Makan'); setDesc(''); setDate(todayStr()); setTxAccountId(''); setShowTxModal(true) }
-  const openEdit = (t: Transaction) => { setEditId(t.id); setType(t.type); setAmount(String(t.amount)); setCategory(t.category); setDesc(t.description); setDate(t.date); setTxAccountId(t.accountId ?? ''); setShowTxModal(true) }
+  // ── Budget vs Actual: monthly rollover + overspend suggestions ──
+  const budgetVsActual = useMemo(() => {
+    const now = new Date()
+    const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    // Last 3 complete months
+    const prevMonths = Array.from({ length: 3 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (i + 1), 1)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    })
+
+    return budgets.map((b) => {
+      // This month's actual spending
+      const spentThisMonth = transactions
+        .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(thisMonthKey))
+        .reduce((s, t) => s + t.amount, 0)
+
+      // Rollover from last month
+      const lastMonthSpent = transactions
+        .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(prevMonths[0]!))
+        .reduce((s, t) => s + t.amount, 0)
+      const rollover = Math.max(0, (b.limit + (budgetRollover[b.category] || 0)) - lastMonthSpent)
+
+      // Effective budget = base limit + rollover
+      const effectiveLimit = b.limit + (budgetRollover[b.category] || 0)
+      const pct = Math.min(Math.round((spentThisMonth / effectiveLimit) * 100), 100)
+      const barPct = Math.min(pct, 100)
+
+      // Overspend analysis: check last 3 months
+      const historicalPcts = prevMonths.map((mk) => {
+        const spent = transactions
+          .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(mk))
+          .reduce((s, t) => s + t.amount, 0)
+        return b.limit > 0 ? Math.round((spent / b.limit) * 100) : 0
+      })
+      const overspentMonths = historicalPcts.filter((p) => p >= 100).length
+      const avgOverspend = historicalPcts.filter((p) => p >= 100).length > 0
+        ? Math.round(historicalPcts.filter((p) => p >= 100).reduce((s, p) => s + p, 0) / historicalPcts.filter((p) => p >= 100).length)
+        : 0
+      const needsIncrease = overspentMonths >= 2
+      const suggestion = needsIncrease
+        ? `Budget ${b.category} overspend ${avgOverspend}% ${overspentMonths} bulan terakhir → naikin budget?`
+        : null
+
+      return {
+        ...b,
+        spent: spentThisMonth,
+        effectiveLimit,
+        rollover,
+        pct,
+        barPct,
+        suggestion,
+      }
+    })
+  }, [budgets, transactions, budgetRollover])
+
+  const openAdd = () => { setEditId(null); setType('expense'); setAmount(''); setCategory('Makan'); setDesc(''); setDate(todayStr()); setTxAccountId(''); setFlexibility('flexible'); setShowTxModal(true) }
+  const openEdit = (t: any) => { setEditId(t.id); setType(t.type); setAmount(String(t.amount)); setCategory(t.category); setDesc(t.description); setDate(t.date); setTxAccountId(t.accountId ?? ''); setFlexibility((t.flexibility ?? 'flexible') as 'fixed' | 'flexible' | 'discretionary'); setShowTxModal(true) }
 
   const saveTx = async () => {
     if (!userId || !amount) return
     const numAmount = Number(amount)
     if (isNaN(numAmount) || numAmount <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
     const oldAmount = editId ? useFinanceStore.getState().transactions.find((t) => t.id === editId)?.amount ?? 0 : 0
-    if (editId) { await editTransaction({ id: editId, type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null }) }
-    else { await addTransaction(userId, { type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null }) }
+    if (editId) { await editTransaction({ id: editId, type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }) }
+    else { await addTransaction(userId, { type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }) }
     if (type === 'expense') checkBudgetAlert(category, numAmount, oldAmount)
     setShowTxModal(false)
   }
@@ -361,7 +432,7 @@ export default function FinancePage() {
       try {
         await addTransaction(userId, {
           type: row.type, amount: row.amount, category: row.category,
-          description: row.description, date: row.date, accountId: null,
+          description: row.description, date: row.date, accountId: null, flexibility: 'flexible',
         })
         existingSet.add(key) // Prevent internal CSV duplicates
         imported++
@@ -464,6 +535,60 @@ export default function FinancePage() {
           </AreaChart>
         </ResponsiveContainer>
       </NeubruCard>
+
+      {/* ── Budget vs Actual ── */}
+      {budgetVsActual.length > 0 && (
+        <div className="mb-7">
+          <h3 className="mb-3">Budget vs Actual</h3>
+          <NeubruCard>
+            <div className="flex flex-col gap-4">
+              {budgetVsActual.map((b) => {
+                const barColor = b.pct <= 80 ? '#22c55e' : b.pct <= 99 ? '#ff8a00' : '#ff4b4b'
+                return (
+                  <div key={b.id}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold">{b.category}</span>
+                        {b.rollover > 0 && (
+                          <span className="text-[10px] font-bold bg-nb-yellow/20 px-1.5 py-0.5 border border-nb-yellow/60">
+                            +{formatCurrency(b.rollover)} rollover
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs font-mono font-bold">
+                        {formatCurrency(b.spent)} / {formatCurrency(b.effectiveLimit)}
+                        <span className={`ml-1.5 ${b.pct >= 100 ? 'text-nb-red' : b.pct > 80 ? 'text-nb-orange' : 'text-nb-green'}`}>
+                          ({b.pct}%)
+                        </span>
+                      </span>
+                    </div>
+                    <div className="relative h-7 bg-nb-bg border-2 border-nb-border overflow-hidden">
+                      {/* Budget bar (gray outline — shows the limit) */}
+                      <div
+                        className="absolute inset-0 border-r-[3px] border-dashed border-nb-fg-muted/40"
+                        style={{ width: `${Math.min(Math.round((b.effectiveLimit / b.effectiveLimit) * 100), 100)}%` }}
+                      />
+                      {/* Actual bar (colored, filled) */}
+                      <div
+                        className="h-full transition-all duration-500"
+                        style={{
+                          width: `${b.barPct}%`,
+                          background: barColor,
+                        }}
+                      />
+                    </div>
+                    {b.suggestion && (
+                      <div className="mt-1.5 text-[11px] font-bold text-nb-orange flex items-center gap-1">
+                        <span>💡</span> {b.suggestion}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </NeubruCard>
+        </div>
+      )}
 
       {accounts.length > 0 && (
         <div className="mb-7">
@@ -624,10 +749,32 @@ export default function FinancePage() {
                 <span className="text-2xl">{t.type === 'income' ? '💰' : '💳'}</span>
                 <div>
                   <div className="font-bold">{t.description || t.category}</div>
-                  <div className="text-xs text-nb-fg-muted flex gap-2 items-center mt-0.5">
+                  <div className="text-xs text-nb-fg-muted flex gap-2 items-center mt-0.5 flex-wrap">
                     <NeubruTag label={t.category} color={CAT_COLORS[t.category] || 'yellow'} />
                     {t.accountId && (() => { const acct = accounts.find((a) => a.id === t.accountId); return acct ? <NeubruTag label={`${ACCOUNT_ICONS[acct.type] || '💵'} ${acct.name}`} color="blue" /> : null })()}
                     {formatDate(t.date)}
+                    {(() => {
+                      const f = (t as any).flexibility ?? 'flexible'
+                      const colors: Record<string, string> = { fixed: '#22c55e', flexible: '#eab308', discretionary: '#ef4444' }
+                      const labels: Record<string, string> = { fixed: 'Fixed', flexible: 'Flexible', discretionary: 'Discr.' }
+                      return (
+                        <span className="flex items-center gap-1 font-bold" style={{ color: colors[f] || '#eab308' }}>
+                          <span className="w-2 h-2 rounded-full inline-block" style={{ background: colors[f] || '#eab308' }} />
+                          {labels[f] || 'Flexible'}
+                        </span>
+                      )
+                    })()}
+                    {linkedNotesByTx.has(t.id) && (() => {
+                      const linkedNotes = linkedNotesByTx.get(t.id)!
+                      return (
+                        <span className="relative group cursor-help" title={linkedNotes.map((n) => n.title).join('\n')}>
+                          <span className="font-bold text-nb-purple">📝</span>
+                          <span className="absolute bottom-full left-0 mb-1 hidden group-hover:block bg-nb-bg border-2 border-nb-border px-2 py-1 text-xs font-bold whitespace-nowrap shadow-nb-sm z-50 max-w-[250px] truncate">
+                            {linkedNotes.map((n) => n.title).join(' | ')}
+                          </span>
+                        </span>
+                      )
+                    })()}
                   </div>
                 </div>
               </div>
@@ -682,6 +829,36 @@ export default function FinancePage() {
               Belum ada akun. <button type="button" className="underline font-bold cursor-pointer" onClick={() => { setShowTxModal(false); setShowAccountModal(true) }}>Buat akun dulu</button>
             </div>
           )}
+        </div>
+        <div className="flex flex-col gap-1.5 mb-4">
+          <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Fleksibilitas</label>
+          <div className="flex gap-2">
+            {([
+              { key: 'fixed' as const, label: '🟢 Fixed', desc: 'Harus bayar' },
+              { key: 'flexible' as const, label: '🟡 Flexible', desc: 'Bisa disesuaikan' },
+              { key: 'discretionary' as const, label: '🔴 Discretionary', desc: 'Opsional/mewah' },
+            ]).map((opt) => {
+              const sel = flexibility === opt.key
+              const bg = opt.key === 'fixed' ? '#dcfce7' : opt.key === 'flexible' ? '#fef9c3' : '#fee2e2'
+              const borderColor = opt.key === 'fixed' ? '#22c55e' : opt.key === 'flexible' ? '#eab308' : '#ef4444'
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setFlexibility(opt.key)}
+                  className="flex-1 px-3 py-2 text-center font-bold text-xs uppercase tracking-wider cursor-pointer transition-all nb-panel"
+                  style={{
+                    border: sel ? `3px solid ${borderColor}` : '2px solid var(--nb-border, #1a1a1c)',
+                    background: sel ? bg : 'var(--nb-bg, #fff)',
+                    boxShadow: sel ? `3px 3px 0 ${borderColor}` : undefined,
+                  }}
+                >
+                  <div>{opt.label}</div>
+                  <div className="text-[10px] text-nb-fg-muted mt-0.5 normal-case font-medium">{opt.desc}</div>
+                </button>
+              )
+            })}
+          </div>
         </div>
         <div className="flex gap-2.5">
           <NeubruBtn color="green" onClick={saveTx}>💾 Simpan</NeubruBtn>

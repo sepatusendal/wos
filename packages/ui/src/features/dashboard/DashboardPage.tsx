@@ -4,6 +4,8 @@ import { useWealthStore } from '../../stores/wealthStore'
 import { useNetWorthStore } from '../../stores/netWorthStore'
 import { useTodoStore } from '../../stores/todoStore'
 import { useAuthStore } from '../../stores/authStore'
+import { useAchievementStore, ACHIEVEMENTS } from '../../stores/achievementStore'
+import { useCheckinStore } from '../../stores/checkinStore'
 import { NeubruCard, NeubruTag, NeubruBtn, NeubruInput } from '../../components'
 import { formatDate, formatShortDate, formatMonthShort, todayStr } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
@@ -25,6 +27,35 @@ function pctChange(cur: number, prev: number): { pct: number; dir: 1 | -1 | 0; i
 
 type DateFilter = 'today' | 'month' | 'year' | 'custom' | 'all'
 
+function DailyCheckinWidget() {
+  const todayChecked = useCheckinStore((s) => s.todayChecked)
+  const todayMood = useCheckinStore((s) => s.todayMood)
+  const todayEnergy = useCheckinStore((s) => s.todayEnergy)
+  const MOOD_EMOJIS = ['😫', '😐', '🙂', '😊', '🔥']
+
+  if (todayChecked) {
+    return (
+      <>
+        <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">🧘 Daily Check-in</div>
+        <div className="text-xl font-extrabold">
+          {MOOD_EMOJIS[todayMood - 1] || '🙂'}
+          {' · '}
+          <span className="text-nb-yellow">{'⚡'.repeat(todayEnergy)}</span>
+        </div>
+        <div className="text-xs text-nb-green mt-1 font-medium">Checked in today!</div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">🧘 Daily Check-in</div>
+      <div className="text-nb-orange font-mono text-lg font-extrabold">🧘 Check in</div>
+      <div className="text-xs text-nb-fg-muted mt-1 font-medium">How are you today?</div>
+    </>
+  )
+}
+
 export default function DashboardPage() {
   const userId = useAuthStore((s) => s.userId)
   const formatCurrency = useFormatCurrency()
@@ -32,6 +63,7 @@ export default function DashboardPage() {
   const { assets, fetchAll: fetchWealth } = useWealthStore()
   const { entries, fetchAll: fetchNetWorth } = useNetWorthStore()
   const { todos, fetchAll: fetchTodo } = useTodoStore()
+  const { unlocked, checkAll, getLastUnlocked } = useAchievementStore()
 
   const [loaded, setLoaded] = useState(false)
   const [dateFilter, setDateFilter] = useState<DateFilter>('month')
@@ -47,6 +79,11 @@ export default function DashboardPage() {
         setLoaded(true) // Still show dashboard; individual sections handle empty data
       })
   }, [userId, fetchFinance, fetchWealth, fetchNetWorth, fetchTodo])
+
+  // Check achievements after data is loaded
+  useEffect(() => {
+    if (loaded) checkAll()
+  }, [loaded, checkAll])
 
   const today = todayStr()
   const thisMonthKey = today.slice(0, 7)
@@ -141,6 +178,18 @@ export default function DashboardPage() {
   }, [recurring])
 
   const budgetWarnings = budgetProgress.filter((b) => b.pct > 80).length
+
+  const flexibilityBreakdown = useMemo(() => {
+    const expenses = filteredTx.filter((t) => t.type === 'expense')
+    const fixed = expenses.filter((t) => (t as any).flexibility === 'fixed').reduce((s, t) => s + t.amount, 0)
+    const flexible = expenses.filter((t) => (t as any).flexibility === 'flexible' || !(t as any).flexibility).reduce((s, t) => s + t.amount, 0)
+    const discretionary = expenses.filter((t) => (t as any).flexibility === 'discretionary').reduce((s, t) => s + t.amount, 0)
+    const total = fixed + flexible + discretionary
+    const fixedPct = total > 0 ? Math.round((fixed / total) * 100) : 0
+    const flexPct = total > 0 ? Math.round((flexible / total) * 100) : 0
+    const discPct = total > 0 ? Math.round((discretionary / total) * 100) : 0
+    return { fixed, flexible, discretionary, total, fixedPct, flexPct, discPct }
+  }, [filteredTx])
 
   if (!loaded) {
     return (
@@ -244,6 +293,46 @@ export default function DashboardPage() {
             {budgetWarnings > 0 && (
               <span className="text-nb-red ml-2">· ⚠️ {budgetWarnings} budget almost full</span>
             )}
+          </div>
+        </NeubruCard>
+        <NeubruCard>
+          <DailyCheckinWidget />
+        </NeubruCard>
+        <NeubruCard>
+          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Flexible Spend</div>
+          <div className="text-nb-orange font-mono text-xl font-extrabold">{formatCurrency(flexibilityBreakdown.flexible + flexibilityBreakdown.discretionary)}</div>
+          <div className="text-xs text-nb-fg-muted mt-1 font-medium">
+            {flexibilityBreakdown.discretionary > 0 && (
+              <span className="text-nb-orange font-bold">Potentially save: {formatCurrency(flexibilityBreakdown.discretionary)}</span>
+            )}
+          </div>
+          {flexibilityBreakdown.total > 0 && (
+            <div className="mt-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <div className="flex-1 h-3 bg-nb-bg border-2 border-nb-border overflow-hidden flex">
+                  <div className="h-full transition-all" style={{ width: `${flexibilityBreakdown.fixedPct}%`, background: '#22c55e' }} title={`Fixed ${flexibilityBreakdown.fixedPct}%`} />
+                  <div className="h-full transition-all" style={{ width: `${flexibilityBreakdown.flexPct}%`, background: '#eab308' }} title={`Flexible ${flexibilityBreakdown.flexPct}%`} />
+                  <div className="h-full transition-all" style={{ width: `${flexibilityBreakdown.discPct}%`, background: '#ef4444' }} title={`Discr. ${flexibilityBreakdown.discPct}%`} />
+                </div>
+              </div>
+              <div className="flex gap-3 text-[10px] font-bold text-nb-fg-muted">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: '#22c55e' }} />Fixed {flexibilityBreakdown.fixedPct}%</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: '#eab308' }} />Flex {flexibilityBreakdown.flexPct}%</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: '#ef4444' }} />Disc {flexibilityBreakdown.discPct}%</span>
+              </div>
+            </div>
+          )}
+        </NeubruCard>
+        <NeubruCard>
+          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Achievements</div>
+          <div className="text-nb-yellow font-mono text-xl font-extrabold">
+            {unlocked.length}/{ACHIEVEMENTS.length}
+          </div>
+          <div className="text-xs text-nb-fg-muted mt-1 font-medium">
+            {(() => {
+              const last = getLastUnlocked()
+              return last ? <span title={last.desc}>{last.icon} {last.name}</span> : 'No badges yet'
+            })()}
           </div>
         </NeubruCard>
       </div>

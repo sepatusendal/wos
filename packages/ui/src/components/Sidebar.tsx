@@ -9,8 +9,11 @@ const PAGES = [
   { id: 'networth', label: 'Net Worth', icon: '🏦' },
   { id: 'subscription', label: 'Subscriptions', icon: '📋' },
   { id: 'habit', label: 'Habits', icon: '🔥' },
+  { id: 'fire', label: 'FIRE', icon: '🚀' },
   { id: 'vault', label: 'Vault', icon: '🔐' },
+  { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'todo', label: 'Todo', icon: '✅' },
+  { id: 'review', label: 'Review', icon: '🎉' },
   { id: 'settings', label: 'Settings', icon: '⚙️' },
 ] as const
 
