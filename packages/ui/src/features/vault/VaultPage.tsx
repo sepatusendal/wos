@@ -79,7 +79,7 @@ export default function VaultPage() {
             <div className="text-5xl mb-3">🔐</div>
             <h2 className="text-lg mb-2">Vault Terkunci</h2>
             <p className="text-nb-fg-muted mb-5 text-sm">Masukkan password vault</p>
-            <NeubruInput value={vaultPass} onChange={setVaultPass} type="password" placeholder="Password vault..." />
+            <NeubruInput value={vaultPass} onChange={setVaultPass} type="password" placeholder="Password vault..." onKeyDown={(e) => e.key === 'Enter' && handleUnlock()} />
             {vaultError && <div className="bg-nb-red text-white font-bold text-sm p-2.5 border-nb mt-3">{vaultError}</div>}
             <div className="mt-4"><NeubruBtn color="blue" onClick={handleUnlock}>🔓 Buka Vault</NeubruBtn></div>
           </div>
