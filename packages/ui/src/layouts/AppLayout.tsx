@@ -4,6 +4,7 @@ import { Toaster } from 'sonner'
 import LoadingSpinner from '../components/LoadingSpinner'
 import PageTransition from '../components/PageTransition'
 import ErrorBoundary from '../components/ErrorBoundary'
+import CommandPalette from '../components/CommandPalette'
 import { useVaultStore } from '../stores/vaultStore'
 import { useSettingsStore } from '../stores/settingsStore'
 
@@ -113,6 +114,7 @@ export default function AppLayout({ children }: Props) {
         </ErrorBoundary>
       </main>
       <Toaster position="top-right" richColors />
+      <CommandPalette onNavigate={navigate} />
     </div>
   )
 }

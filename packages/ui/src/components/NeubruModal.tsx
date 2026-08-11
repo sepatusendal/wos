@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { NeubruBtn } from './NeubruBtn'
 
 interface Props {
@@ -9,6 +9,13 @@ interface Props {
 }
 
 export function NeubruModal({ open, onClose, title, children }: Props) {
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open, onClose])
+
   if (!open) return null
   return (
     <div className="nb-modal-overlay" onClick={onClose} role="dialog" aria-modal="true">
