@@ -11,7 +11,7 @@ interface NotesState {
   setAdapter: (adapter: DatabaseAdapter) => void
   fetchAll: (userId: string) => Promise<void>
   addNote: (userId: string, data: { title: string; content: string; tags: string[]; date: string; pinned?: boolean; linkedTodoId?: string | null; linkedTransactionId?: string | null }) => Promise<void>
-  editNote: (data: { id: string; title: string; content: string; tags: string[]; date: string; pinned: boolean }) => Promise<void>
+  editNote: (data: { id: string; title: string; content: string; tags: string[]; date: string; pinned: boolean; linkedTodoId?: string | null; linkedTransactionId?: string | null }) => Promise<void>
   deleteNote: (id: string) => Promise<void>
   togglePin: (id: string, pinned: boolean) => Promise<void>
 }
@@ -57,10 +57,13 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     const now = isoNow()
     await adapter.db.update('notes').set({
       title: d.title, content: d.content, tags: JSON.stringify(d.tags),
-      date: d.date, pinned: d.pinned ? 1 : 0, updated_at: now,
+      date: d.date, pinned: d.pinned ? 1 : 0,
+      linked_todo_id: d.linkedTodoId ?? null,
+      linked_transaction_id: d.linkedTransactionId ?? null,
+      updated_at: now,
     }).where(eq('id', d.id))
     set((s) => ({
-      notes: s.notes.map((n) => n.id === d.id ? { ...n, title: d.title, content: d.content, tags: d.tags, date: d.date, pinned: d.pinned, updatedAt: now } : n),
+      notes: s.notes.map((n) => n.id === d.id ? { ...n, title: d.title, content: d.content, tags: d.tags, date: d.date, pinned: d.pinned, linkedTodoId: d.linkedTodoId ?? n.linkedTodoId, linkedTransactionId: d.linkedTransactionId ?? n.linkedTransactionId, updatedAt: now } : n),
     }))
   },
 

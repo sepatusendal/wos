@@ -79,7 +79,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const { adapter } = get()
     if (!adapter) return
     const id = generateId()
-    await adapter.db.insert('transactions').values({ id, user_id: userId, type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId ?? null, flexibility: (t as any).flexibility ?? 'flexible', created_at: isoNow() })
+    await adapter.db.insert('transactions').values({ id, user_id: userId, type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId ?? null, flexibility: t.flexibility ?? 'flexible', created_at: isoNow() })
 
     if (t.accountId) {
       const delta = t.type === 'income' ? t.amount : -t.amount

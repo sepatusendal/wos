@@ -74,7 +74,7 @@ const ROAST_TEMPLATES = [
   },
 ]
 
-export const useRoastStore = create<RoastState>((_set, get) => ({
+export const useRoastStore = create<RoastState>((set, get) => ({
   roastMode: loadRoastMode(),
 
   toggleRoast: () => {
@@ -84,8 +84,7 @@ export const useRoastStore = create<RoastState>((_set, get) => ({
     } catch {
       // localStorage unavailable
     }
-    // Use setState directly on the store
-    _set({ roastMode: next })
+    set({ roastMode: next })
   },
 
   generateRoast: (transactions, budgets) => {

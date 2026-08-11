@@ -69,7 +69,7 @@ function parseAmount(raw: string): number | null {
   const cleaned = raw.replace(/,/g, '.').trim().toLowerCase()
   if (!cleaned) return null
 
-  const match = cleaned.match(/^([\d.]+)\s*(rb|ribu|k|jt|juta|m|milyar|miliar)?$/)
+  const match = cleaned.match(/^(\d+(?:\.\d+)?)\s*(rb|ribu|k|jt|juta|m|milyar|miliar)?$/)
   if (!match) return null
 
   let num = parseFloat(match[1]!)

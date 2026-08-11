@@ -85,11 +85,24 @@ export const useCheckinStore = create<CheckinState>((set, get) => ({
   getTodayCheckin: () => {
     const s = get()
     if (!s.todayChecked) return null
+    // Read checkedAt from stored data to preserve original timestamp
+    let checkedAt = new Date().toISOString()
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(storageKey())
+        if (raw) {
+          const data: TodayCheckin = JSON.parse(raw)
+          checkedAt = data.checkedAt
+        }
+      } catch {
+        // fall back to current time
+      }
+    }
     return {
       mood: s.todayMood,
       energy: s.todayEnergy,
       highlight: s.todayHighlight,
-      checkedAt: new Date().toISOString(),
+      checkedAt,
     }
   },
 }))
