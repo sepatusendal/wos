@@ -85,7 +85,7 @@ export const useRoastStore = create<RoastState>((_set, get) => ({
       // localStorage unavailable
     }
     // Use setState directly on the store
-    useRoastStore.setState({ roastMode: next })
+    _set({ roastMode: next })
   },
 
   generateRoast: (transactions, budgets) => {
