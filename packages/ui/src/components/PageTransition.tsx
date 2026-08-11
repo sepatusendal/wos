@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 interface Props {
   pageKey: string
@@ -12,6 +12,7 @@ export default function PageTransition({ pageKey, children, className = '' }: Pr
   const [displayedKey, setDisplayedKey] = useState(pageKey)
   const [exiting, setExiting] = useState(false)
   const [entering, setEntering] = useState(false)
+  const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (pageKey === displayedKey) return
@@ -25,14 +26,19 @@ export default function PageTransition({ pageKey, children, className = '' }: Pr
       setEntering(true)
 
       // Clear entering after animation completes
-      const enterTimer = setTimeout(() => {
+      enterTimerRef.current = setTimeout(() => {
+        enterTimerRef.current = null
         setEntering(false)
       }, 350)
-
-      return () => clearTimeout(enterTimer)
     }, 200)
 
-    return () => clearTimeout(swapTimer)
+    return () => {
+      clearTimeout(swapTimer)
+      if (enterTimerRef.current) {
+        clearTimeout(enterTimerRef.current)
+        enterTimerRef.current = null
+      }
+    }
   }, [pageKey, displayedKey])
 
   return (

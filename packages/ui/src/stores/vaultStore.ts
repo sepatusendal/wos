@@ -13,6 +13,8 @@ interface VaultState {
   entries: VaultEntry[]
   loading: boolean
   vaultKey: CryptoKey | null
+  /** Entries that failed to decrypt on the last fetchAll — surfaced to the UI instead of just logged, so a partial-migration or corrupted entry isn't silently invisible. */
+  decryptFailures: number
   setAdapter: (adapter: DatabaseAdapter) => void
   fetchAll: (userId: string) => Promise<void>
   unlock: (userId: string, password: string) => Promise<{ ok: boolean; error?: string }>
@@ -29,6 +31,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   entries: [],
   loading: false,
   vaultKey: null,
+  decryptFailures: 0,
 
   setAdapter: (adapter) => set({ adapter }),
 
@@ -45,16 +48,18 @@ export const useVaultStore = create<VaultState>((set, get) => ({
         category: v.category as VaultEntry['category'], createdAt: v.created_at,
       } as VaultEntry)))
       const decrypted: VaultEntry[] = []
+      let failures = 0
       for (const r of results) {
         if (r.status === 'fulfilled') {
           decrypted.push(r.value)
         } else {
+          failures++
           console.error('[vault] fetchAll: failed to decrypt an entry:', r.reason)
         }
       }
-      set({ entries: decrypted, loading: false })
+      set({ entries: decrypted, loading: false, decryptFailures: failures })
     } catch (err) {
-      set({ loading: false, entries: [] })
+      set({ loading: false, entries: [], decryptFailures: 0 })
       throw err
     }
   },
@@ -163,28 +168,55 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       const { ciphertext: newVerifyToken } = await encrypt(VAULT_CANARY, newKey)
 
       let skippedCount = 0
-      // Re-encrypt all existing vault entries with new key
+      // Re-encrypt all existing vault entries with new key. There is no
+      // multi-statement DB transaction available through the adapter layer,
+      // so full atomicity isn't possible — instead: (1) keep each row's
+      // original encrypted values so a failure partway through can be
+      // rolled back to the still-old-key-decryptable state, and (2) only
+      // flip users.vault_salt/vault_verify (the actual "password changed"
+      // moment) after every row has been confirmed re-encrypted. This
+      // closes the window for the common failure mode (a write throws —
+      // network hiccup, adapter error) at the cost of not protecting
+      // against the app being killed mid-loop with no chance to run the
+      // rollback, which remains a known, inherent limitation.
       if (oldKey) {
         const rawEntries = await adapter.db.select().from('vault_entries').where(eq('user_id', userId)).all()
-        for (const raw of rawEntries as any[]) {
-          let decryptedPassword = ''
-          let decryptedNotes = ''
-          try { decryptedPassword = await decrypt(raw.password_encrypted, oldKey) } catch { skippedCount++; continue }
-          if (raw.notes_encrypted) {
-            try { decryptedNotes = await decrypt(raw.notes_encrypted, oldKey) } catch {}
+        const rollback: { id: string; password_encrypted: string; password_iv: string; notes_encrypted: string; notes_iv: string }[] = []
+        try {
+          for (const raw of rawEntries as any[]) {
+            let decryptedPassword = ''
+            let decryptedNotes = ''
+            try { decryptedPassword = await decrypt(raw.password_encrypted, oldKey) } catch { skippedCount++; continue }
+            if (raw.notes_encrypted) {
+              try { decryptedNotes = await decrypt(raw.notes_encrypted, oldKey) } catch {}
+            }
+            const newPassEnc = await encrypt(decryptedPassword, newKey)
+            const newNotesEnc = decryptedNotes ? await encrypt(decryptedNotes, newKey) : { ciphertext: '', iv: '' }
+            rollback.push({ id: raw.id, password_encrypted: raw.password_encrypted, password_iv: raw.password_iv, notes_encrypted: raw.notes_encrypted ?? '', notes_iv: raw.notes_iv ?? '' })
+            await adapter.db.update('vault_entries').set({
+              password_encrypted: newPassEnc.ciphertext,
+              password_iv: newPassEnc.iv,
+              notes_encrypted: newNotesEnc.ciphertext,
+              notes_iv: newNotesEnc.iv,
+            }).where(eq('id', raw.id))
           }
-          const newPassEnc = await encrypt(decryptedPassword, newKey)
-          const newNotesEnc = decryptedNotes ? await encrypt(decryptedNotes, newKey) : { ciphertext: '', iv: '' }
-          await adapter.db.update('vault_entries').set({
-            password_encrypted: newPassEnc.ciphertext,
-            password_iv: newPassEnc.iv,
-            notes_encrypted: newNotesEnc.ciphertext,
-            notes_iv: newNotesEnc.iv,
-          }).where(eq('id', raw.id))
+        } catch (writeErr) {
+          for (const rb of rollback) {
+            try {
+              await adapter.db.update('vault_entries').set({
+                password_encrypted: rb.password_encrypted, password_iv: rb.password_iv,
+                notes_encrypted: rb.notes_encrypted, notes_iv: rb.notes_iv,
+              }).where(eq('id', rb.id))
+            } catch (rollbackErr) {
+              console.error('[vault] rollback failed for entry', rb.id, rollbackErr)
+            }
+          }
+          return { ok: false, error: 'Gagal mengubah password vault — perubahan dibatalkan, password lama masih berlaku. Coba lagi.' }
         }
       }
 
-      // Update user with new salt + canary
+      // Only committed once every row above succeeded — this is the moment
+      // the password actually changes.
       await adapter.db.update('users').set({ vault_salt: newSaltB64, vault_verify: newVerifyToken }).where(eq('id', userId))
 
       // Update in-memory key and re-fetch entries

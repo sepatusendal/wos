@@ -5,6 +5,7 @@ import { useHabitStore } from '../../stores/habitStore'
 import { useNetWorthStore } from '../../stores/netWorthStore'
 import { NeubruCard } from '../../components'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
+import { todayStr } from '@wos/shared'
 
 interface RecordCard {
   icon: string
@@ -339,7 +340,7 @@ export default function RecordsPage() {
 
     // ── 9. Total Budget On Track ──
     if (budgets.length > 0 && transactions.length > 0) {
-      const thisMonth = new Date().toISOString().slice(0, 7)
+      const thisMonth = todayStr().slice(0, 7)
       const onTrack = budgets.filter((b) => {
         const spent = transactions
           .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(thisMonth))

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore } from '@wos/ui'
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getCurrentWindow, availableMonitors } from '@tauri-apps/api/window'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 
 // ── Window State Persistence ──────────────────────────────
@@ -36,13 +36,54 @@ function saveWindowState(state: WindowState) {
   }
 }
 
+// Fixes #24: a saved position may point at a monitor that no longer exists
+// (external display unplugged, resolution changed) — restoring it blindly would
+// place the window off-screen with no way to get it back.
+async function isPositionVisible(x: number, y: number, width: number, height: number) {
+  try {
+    const monitors = await availableMonitors()
+    if (!monitors.length) return false
+    // Require a meaningful chunk of the window (incl. its title bar) to land on a monitor
+    const MIN_VISIBLE = 80
+    return monitors.some((m) => {
+      const left = m.position.x
+      const top = m.position.y
+      const right = left + m.size.width
+      const bottom = top + m.size.height
+      const overlapX = Math.min(x + width, right) - Math.max(x, left)
+      const overlapY = Math.min(y + height, bottom) - Math.max(y, top)
+      return overlapX >= MIN_VISIBLE && overlapY >= MIN_VISIBLE
+    })
+  } catch {
+    // Monitor enumeration failed — treat the saved position as untrustworthy
+    return false
+  }
+}
+
+// Guarantees the window becomes visible exactly once (it starts hidden in
+// tauri.conf.json so the user never sees it jump to the restored geometry).
+let windowShown = false
+async function showWindow() {
+  if (windowShown) return
+  windowShown = true
+  try {
+    await getCurrentWindow().show()
+  } catch {
+    // Window API unavailable — nothing else we can do here
+  }
+}
+
+// Safety net: if React never mounts (render error), still show the window
+// rather than leaving an invisible running process.
+setTimeout(() => { void showWindow() }, 5000)
+
 async function restoreWindowState() {
   const saved = loadWindowState()
   if (!saved) return
 
   try {
     const win = getCurrentWindow()
-    if (saved.x !== null && saved.y !== null) {
+    if (saved.x !== null && saved.y !== null && await isPositionVisible(saved.x, saved.y, saved.width, saved.height)) {
       await win.setPosition(new PhysicalPosition(saved.x, saved.y))
     }
     await win.setSize(new PhysicalSize(saved.width, saved.height))
@@ -86,9 +127,11 @@ export default function App() {
 
   // Restore saved window position/size on mount
   useEffect(() => {
-    restoreWindowState().then(() => {
-      attachWindowStateListeners()
+    restoreWindowState().finally(() => {
+      try { attachWindowStateListeners() } catch { /* ignore */ }
       setWindowReady(true)
+      // Always show, even if restore failed — never leave an invisible window
+      void showWindow()
     })
   }, [])
 
@@ -103,8 +146,6 @@ export default function App() {
         `)
         // Migration: add vault_verify if upgrading from older schema
         try { await tauriDb.execute(`ALTER TABLE users ADD COLUMN vault_verify TEXT`) } catch {}
-        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
-        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
         try { await tauriDb.execute(`ALTER TABLE users ADD COLUMN session_token TEXT`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS transactions (
@@ -148,6 +189,8 @@ export default function App() {
             category TEXT NOT NULL, created_at TEXT NOT NULL
           )
         `)
+        try { await tauriDb.execute(`ALTER TABLE vault_entries ADD COLUMN password_iv TEXT NOT NULL DEFAULT ''`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE vault_entries ADD COLUMN notes_iv TEXT NOT NULL DEFAULT ''`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS todos (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -156,12 +199,15 @@ export default function App() {
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
           )
         `)
+        try { await tauriDb.execute(`ALTER TABLE todos ADD COLUMN parent_id TEXT`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS accounts (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
-            type TEXT NOT NULL, balance REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+            type TEXT NOT NULL, balance REAL NOT NULL DEFAULT 0, opening_balance REAL,
+            created_at TEXT NOT NULL
           )
         `)
+        try { await tauriDb.execute(`ALTER TABLE accounts ADD COLUMN opening_balance REAL`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS savings_goals (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -169,6 +215,7 @@ export default function App() {
             deadline TEXT, created_at TEXT NOT NULL
           )
         `)
+        try { await tauriDb.execute(`ALTER TABLE savings_goals ADD COLUMN deadline TEXT`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS recurring_transactions (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -192,6 +239,8 @@ export default function App() {
             active INTEGER NOT NULL DEFAULT 1, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
           )
         `)
+        try { await tauriDb.execute(`ALTER TABLE subscriptions ADD COLUMN icon TEXT NOT NULL DEFAULT '📦'`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE subscriptions ADD COLUMN notes TEXT NOT NULL DEFAULT ''`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS habits (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,

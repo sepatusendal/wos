@@ -97,6 +97,10 @@ export const accounts = sqliteTable('accounts', {
   name: text('name').notNull(),
   type: text('type', { enum: ['cash', 'bank', 'ewallet', 'credit'] }).notNull(),
   balance: real('balance').notNull().default(0),
+  // Nullable: existing rows are lazily migrated (opening_balance = balance -
+  // sum(current transactions)) the first time they're loaded after this
+  // column was introduced. See financeStore.ts fetchAll.
+  openingBalance: real('opening_balance'),
   createdAt: text('created_at').notNull(),
 })
 

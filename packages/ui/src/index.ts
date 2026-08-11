@@ -1,5 +1,6 @@
 export { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruCheckbox, NeubruTag, LoadingSpinner, PageTransition, ErrorBoundary } from './components'
 export { default as WeeklyReflection } from './components/WeeklyReflection'
+export { default as Confetti } from './components/Confetti'
 export { default as AppLayout } from './layouts/AppLayout'
 export { default as LoginPage } from './features/auth/LoginPage'
 export { useAuthStore } from './stores/authStore'

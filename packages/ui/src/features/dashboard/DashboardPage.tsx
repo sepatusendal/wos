@@ -5,6 +5,9 @@ import { useNetWorthStore } from '../../stores/netWorthStore'
 import { useTodoStore } from '../../stores/todoStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruCard, NeubruTag, NeubruBtn, NeubruInput } from '../../components'
+import FinancialPet from '../../components/FinancialPet'
+import OnThisDay from '../../components/OnThisDay'
+import MonthlyCard from '../../components/MonthlyCard'
 import { formatDate, formatShortDate, formatMonthShort, todayStr } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts'
@@ -57,7 +60,7 @@ export default function DashboardPage() {
     if (dateFilter === 'month') return transactions.filter((t) => t.date.startsWith(thisMonthKey))
     if (dateFilter === 'year') return transactions.filter((t) => t.date.startsWith(thisYear))
     if (dateFilter === 'custom' && customStart && customEnd) {
-    if (dateFilter === 'custom' && (!customStart || !customEnd)) return transactions      return transactions.filter((t) => t.date >= customStart && t.date <= customEnd)
+      return transactions.filter((t) => t.date >= customStart && t.date <= customEnd)
     }
     return transactions
   }, [transactions, dateFilter, today, thisMonthKey, thisYear, customStart, customEnd])
@@ -164,7 +167,7 @@ export default function DashboardPage() {
     if (dateFilter === 'month') return `This Month (${formatMonthShort(thisMonthKey)})`
     if (dateFilter === 'year') return `This Year (${thisYear})`
     if (dateFilter === 'custom' && customStart && customEnd) return `${formatShortDate(customStart)} – ${formatShortDate(customEnd)}`
-    if (dateFilter === 'custom' && (!customStart || !customEnd)) return transactions    return 'All Time'
+    return 'All Time'
   })()
 
   return (
@@ -183,6 +186,7 @@ export default function DashboardPage() {
               {p.label}
             </NeubruBtn>
           ))}
+          <MonthlyCard />
         </div>
       </div>
 
@@ -246,6 +250,13 @@ export default function DashboardPage() {
             )}
           </div>
         </NeubruCard>
+      </div>
+
+      <div className="grid grid-cols-2 gap-5 mb-7">
+        <NeubruCard className="!p-0 overflow-hidden">
+          <FinancialPet />
+        </NeubruCard>
+        <OnThisDay />
       </div>
 
       <div className="grid grid-cols-2 gap-5 mb-7">

@@ -59,7 +59,8 @@ export default function FirePage() {
 
   const autoDefaults = useMemo(() => {
     const now = new Date()
-    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1)
+    // 6-month window inclusive of the current month (current month - 5 .. current month)
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
     const cutoff = sixMonthsAgo.toISOString().slice(0, 7) // YYYY-MM
 
     // Recent 6-month transactions
@@ -179,8 +180,12 @@ export default function FirePage() {
     const latestEntry = sortedEntries[0]
     const totalDebt = latestEntry?.totalLiabilities ?? 0
     const totalAssetNW = latestEntry?.totalAssets ?? 0
+    const hasNetWorthData = totalAssetNW > 0 || totalDebt > 0
     const debtRatio = totalAssetNW > 0 ? totalDebt / totalAssetNW : 0
-    const debtScore = Math.min(25, Math.round(Math.max(0, 1 - debtRatio) * 25))
+    // No net worth data at all = neutral (half marks), not a perfect debt ratio
+    const debtScore = hasNetWorthData
+      ? Math.min(25, Math.round(Math.max(0, 1 - debtRatio) * 25))
+      : Math.round(25 * 0.5)
 
     // 4. Net Worth Growth (0-20) — last 6 months trend
     let growthScore = 0

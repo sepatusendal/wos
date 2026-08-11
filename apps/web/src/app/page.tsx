@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import {
   AppLayout, LoginPage, LoadingSpinner,
   useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore,
@@ -42,11 +42,18 @@ export function clearWebSession() {
 
 export default function Home() {
   const [adapterReady, setAdapterReady] = useState(false)
+  // Only true once the session token is actually written to sessionStorage —
+  // AppLayout (and every child fetchAll effect it triggers) is gated on
+  // this, not just on isAuthenticated, so no request can go out with an
+  // empty x-session-token header. Login/register now issue the token
+  // atomically server-side (see authStore.ts), so this is a synchronous
+  // persist of an already-valid token, not a separate DB round-trip.
+  const [sessionPersisted, setSessionPersisted] = useState(false)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const userId = useAuthStore((s) => s.userId)
+  const sessionToken = useAuthStore((s) => s.sessionToken)
   const setAdapter = useAuthStore((s) => s.setAdapter)
   const init = useAuthStore((s) => s.init)
-  const sessionSetupRef = useRef(false)
 
   useEffect(() => {
     const adapter = createHttpAdapter({
@@ -74,35 +81,19 @@ export default function Home() {
     setAdapterReady(true)
   }, [setAdapter])
 
-  // Set up or restore session token after successful login
+  // Persist the session the moment both userId and sessionToken exist, and
+  // only then flip sessionPersisted — AppLayout doesn't mount until this
+  // has happened, so its children's first fetchAll always has a real
+  // x-session-token to send.
   useEffect(() => {
-    if (!adapterReady || !userId || sessionSetupRef.current) return
+    if (!isAuthenticated || !userId || !sessionToken) return
+    setWebSession(userId, sessionToken)
+    setSessionPersisted(true)
+  }, [isAuthenticated, userId, sessionToken])
 
-    // Check if we already have a persisted session
-    const existing = getStoredSession()
-    if (existing && existing.userId === userId) {
-      sessionSetupRef.current = true
-      return // Session is still valid
-    }
-
-    sessionSetupRef.current = true
-    const token = crypto.randomUUID()
-    useAuthStore.getState().adapter?.db
-      .update('users')
-      .set({ session_token: token })
-      .where({ column: 'id', op: '=', value: userId })
-      .then(() => {
-        setWebSession(userId, token)
-      })
-      .catch(() => {
-        sessionSetupRef.current = false
-      })
-  }, [adapterReady, userId])
-
-  // Reset session setup flag on logout
   useEffect(() => {
     if (!isAuthenticated) {
-      sessionSetupRef.current = false
+      setSessionPersisted(false)
       clearWebSession()
     }
   }, [isAuthenticated])
@@ -123,5 +114,18 @@ export default function Home() {
     return <LoginPage onLoginSuccess={() => {}} />
   }
 
-  return <AppLayout />
+  if (!sessionPersisted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-nb-bg">
+        <LoadingSpinner />
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <Confetti />
+      <AppLayout />
+    </>
+  )
 }

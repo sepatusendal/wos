@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicholasio/nicholasio/VERSION/tauri-config-schema.json",
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability untuk WOS desktop",
   "windows": ["main"],

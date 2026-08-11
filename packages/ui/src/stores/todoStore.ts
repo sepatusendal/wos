@@ -70,8 +70,6 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   deleteTodo: async (id) => {
     const { adapter } = get()
     if (!adapter) return
-    // Clean up linked notes
-    try { const nStore = (await import('../stores/notesStore')).useNotesStore; const linked = nStore.getState().notes.filter((n: any) => n.linkedTodoId === id); for (const n of linked) { await adapter.db.update('notes').set({ linked_todo_id: null }).where(eq('id', n.id)); nStore.setState({ notes: nStore.getState().notes.map((x: any) => x.id === n.id ? { ...x, linkedTodoId: null } : x) }) } } catch {}
     const allIds = new Set<string>([id])
     const stack = [id]
     while (stack.length > 0) {
@@ -81,6 +79,8 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         stack.push(child.id)
       })
     }
+    // Clean up linked notes (parent + all cascaded subtasks)
+    try { const nStore = (await import('../stores/notesStore')).useNotesStore; const linked = nStore.getState().notes.filter((n: any) => n.linkedTodoId && allIds.has(n.linkedTodoId)); for (const n of linked) { await adapter.db.update('notes').set({ linked_todo_id: null }).where(eq('id', n.id)); nStore.setState({ notes: nStore.getState().notes.map((x: any) => x.id === n.id ? { ...x, linkedTodoId: null } : x) }) } } catch {}
     for (const tid of [...allIds]) {
       await adapter.db.delete('todos').where(eq('id', tid))
     }

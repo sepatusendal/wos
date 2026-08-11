@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const PHRASES = [
   'Nungguin mantan bales chat...',
@@ -48,6 +48,7 @@ interface Props {
 export default function LoadingSpinner({ text, className = '' }: Props) {
   const [phrase, setPhrase] = useState('')
   const [exit, setExit] = useState(false)
+  const swapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const pickRandom = () => {
@@ -57,13 +58,20 @@ export default function LoadingSpinner({ text, className = '' }: Props) {
     pickRandom()
     const interval = setInterval(() => {
       setExit(true)
-      setTimeout(() => {
+      swapTimerRef.current = setTimeout(() => {
+        swapTimerRef.current = null
         setExit(false)
         const pool = PHRASES.filter((p) => p !== phrase || PHRASES.length === 1)
         setPhrase(pool[Math.floor(Math.random() * pool.length)] ?? PHRASES[0] ?? 'Loading...')
       }, 250)
     }, 2200)
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      if (swapTimerRef.current) {
+        clearTimeout(swapTimerRef.current)
+        swapTimerRef.current = null
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

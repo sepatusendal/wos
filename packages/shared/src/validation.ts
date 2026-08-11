@@ -48,7 +48,7 @@ export const AssetSchema = z.object({
 
 export const NetWorthEntrySchema = z.object({
   id: z.string().uuid(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   totalAssets: z.number(),
   totalLiabilities: z.number(),
   netWorth: z.number(),
@@ -96,6 +96,11 @@ export const AccountSchema = z.object({
   name: z.string().min(1),
   type: AccountType,
   balance: z.number().default(0),
+  // Anchor balance can be added on top of (never mutated after creation).
+  // `balance` is recomputed as openingBalance + sum(this account's
+  // transactions) on every write, instead of being incrementally mutated —
+  // that's what makes balance immune to float drift / partial-write desync.
+  openingBalance: z.number().default(0),
   createdAt: z.string().datetime(),
 })
 

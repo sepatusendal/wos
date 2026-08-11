@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { useWealthStore } from '../../stores/wealthStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag } from '../../components'
@@ -28,6 +29,7 @@ export default function WealthPage() {
   const [buyPrice, setBuyPrice] = useState('')
   const [buyDate, setBuyDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => { if (userId) fetchAll(userId) }, [userId, fetchAll])
 
@@ -52,15 +54,22 @@ export default function WealthPage() {
   const openEdit = (a: Asset) => { setEditId(a.id); setName(a.name); setType(a.type); setQuantity(String(a.quantity)); setUnitPrice(String(a.unitPrice)); setBuyPrice(a.buyPrice != null ? String(a.buyPrice) : ''); setBuyDate(a.buyDate ?? ''); setNotes(a.notes ?? ''); setShowModal(true) }
 
   const save = async () => {
-    if (!userId || !name || !quantity || !unitPrice) return
-    const bp = buyPrice ? Number(buyPrice) : null
-    const bd = buyDate || null
-    if (editId) {
-      await editAsset({ id: editId, name, type, quantity: Number(quantity), unitPrice: Number(unitPrice), notes, buyPrice: bp, buyDate: bd })
-    } else {
-      await addAsset(userId, { name, type, quantity: Number(quantity), unitPrice: Number(unitPrice), buyPrice: bp, buyDate: bd, notes } as any)
-    }
-    setShowModal(false)
+    if (!userId || !name || saving) return
+    const numQuantity = Number(quantity)
+    if (isNaN(numQuantity) || numQuantity <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
+    const numUnitPrice = Number(unitPrice)
+    if (isNaN(numUnitPrice) || numUnitPrice <= 0) { toast.error('Harga satuan harus lebih dari 0'); return }
+    setSaving(true)
+    try {
+      const bp = buyPrice ? Number(buyPrice) : null
+      const bd = buyDate || null
+      if (editId) {
+        await editAsset({ id: editId, name, type, quantity: numQuantity, unitPrice: numUnitPrice, notes, buyPrice: bp, buyDate: bd })
+      } else {
+        await addAsset(userId, { name, type, quantity: numQuantity, unitPrice: numUnitPrice, buyPrice: bp, buyDate: bd, notes } as any)
+      }
+      setShowModal(false)
+    } finally { setSaving(false) }
   }
 
   return (
@@ -181,7 +190,7 @@ export default function WealthPage() {
       <NeubruModal open={showModal} onClose={() => setShowModal(false)} title={editId ? 'Edit Aset' : 'Tambah Aset'}>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Nama Aset</label>
-          <NeubruInput value={name} onChange={setName} placeholder="BTC, AAPL, Rumah..." />
+          <NeubruInput value={name} onChange={setName} placeholder="BTC, AAPL, Rumah..." onKeyDown={(e) => e.key === 'Enter' && save()} />
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
@@ -192,11 +201,11 @@ export default function WealthPage() {
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Jumlah</label>
-            <NeubruInput value={quantity} onChange={setQuantity} placeholder="1" type="number" />
+            <NeubruInput value={quantity} onChange={setQuantity} placeholder="1" type="number" onKeyDown={(e) => e.key === 'Enter' && save()} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Harga Satuan</label>
-            <NeubruInput value={unitPrice} onChange={setUnitPrice} placeholder="1000000" type="number" />
+            <NeubruInput value={unitPrice} onChange={setUnitPrice} placeholder="1000000" type="number" onKeyDown={(e) => e.key === 'Enter' && save()} />
           </div>
         </div>
         {(editId || type === 'stock' || type === 'crypto') && (
@@ -215,7 +224,7 @@ export default function WealthPage() {
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Catatan</label>
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opsional..." rows={3} className="border-2 border-nb-border bg-white px-3 py-2 text-sm font-medium outline-none resize-y w-full" style={{ fontFamily: "inherit" }} />
         </div>
-        <NeubruBtn color="blue" onClick={save}>💾 Simpan</NeubruBtn>
+        <NeubruBtn color="blue" onClick={save} disabled={saving}>{saving ? '⏳ Menyimpan...' : '💾 Simpan'}</NeubruBtn>
       </NeubruModal>
     </div>
   )

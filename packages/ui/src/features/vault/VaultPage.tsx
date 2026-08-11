@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { useAuthStore } from '../../stores/authStore'
 import { useVaultStore } from '../../stores/vaultStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag } from '../../components'
@@ -16,7 +17,7 @@ const CAT_COLORS: Record<string, 'blue' | 'green' | 'pink' | 'purple' | 'orange'
 
 export default function VaultPage() {
   const userId = useAuthStore((s) => s.userId)
-  const { entries, vaultKey, unlock, lock, addEntry, editEntry, deleteEntry } = useVaultStore()
+  const { entries, vaultKey, decryptFailures, unlock, lock, addEntry, editEntry, deleteEntry } = useVaultStore()
   const [vaultPass, setVaultPass] = useState('')
   const [vaultError, setVaultError] = useState('')
   const [search, setSearch] = useState('')
@@ -51,6 +52,10 @@ export default function VaultPage() {
 
   const save = async () => {
     if (!userId || !service || !username || !password) return
+    if (!useVaultStore.getState().vaultKey) {
+      toast.error('Vault terkunci — buka kembali sebelum menyimpan')
+      return
+    }
     if (editId) { await editEntry({ id: editId, service, username, password, url, notes, category }) }
     else { await addEntry(userId, { service, username, password, url, notes, category }) }
     setShowModal(false)
@@ -98,6 +103,14 @@ export default function VaultPage() {
         </div>
       </div>
 
+      {decryptFailures > 0 && (
+        <NeubruCard className="mb-4 !p-4 !bg-nb-red/10 !border-nb-red">
+          <div className="text-sm font-bold text-nb-red">
+            ⚠️ {decryptFailures} entri gagal didekripsi dan disembunyikan dari daftar — kemungkinan sisa migrasi password vault yang tidak selesai. Data-nya masih ada di database, coba unlock ulang; kalau tetap gagal, hubungi dukungan sebelum entri lain diubah.
+          </div>
+        </NeubruCard>
+      )}
+
       <NeubruCard className="mb-4 !p-4">
         <div className="mb-3"><NeubruInput value={search} onChange={setSearch} placeholder="🔍 Cari..." /></div>
         <div className="flex gap-2 flex-wrap">
@@ -135,16 +148,16 @@ export default function VaultPage() {
       <NeubruModal open={showModal} onClose={() => setShowModal(false)} title={editId ? 'Edit Entry' : 'Tambah Entry'}>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Service</label>
-          <NeubruInput value={service} onChange={setService} placeholder="Google, BCA..." />
+          <NeubruInput value={service} onChange={setService} placeholder="Google, BCA..." onKeyDown={(e) => e.key === 'Enter' && save()} />
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Username</label>
-            <NeubruInput value={username} onChange={setUsername} placeholder="johndoe" />
+            <NeubruInput value={username} onChange={setUsername} placeholder="johndoe" onKeyDown={(e) => e.key === 'Enter' && save()} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Password</label>
-            <NeubruInput value={password} onChange={setPassword} type="password" placeholder="••••" />
+            <NeubruInput value={password} onChange={setPassword} type="password" placeholder="••••" onKeyDown={(e) => e.key === 'Enter' && save()} />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">

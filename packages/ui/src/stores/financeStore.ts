@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Transaction, Budget, Account, SavingsGoal, RecurringTransaction } from '@wos/shared'
-import { generateId, isoNow, todayStr } from '@wos/shared'
+import { generateId, isoNow, todayStr, roundMoney } from '@wos/shared'
 import type { DatabaseAdapter } from '@wos/db'
 import { eq, desc } from '@wos/db'
 
@@ -13,12 +13,13 @@ interface FinanceState {
   recurring: RecurringTransaction[]
   loading: boolean
   budgetRollover: Record<string, number>
+  processingRecurring: boolean
   setAdapter: (adapter: DatabaseAdapter) => void
   fetchAll: (userId: string) => Promise<void>
   addTransaction: (userId: string, t: Omit<Transaction, 'id' | 'createdAt'>) => Promise<void>
   editTransaction: (t: { id: string; type: string; amount: number; category: string; description: string; date: string; accountId: string | null; flexibility?: string }) => Promise<void>
   deleteTransaction: (id: string) => Promise<void>
-  addBudget: (userId: string, b: Omit<Budget, 'id'>) => Promise<void>
+  addBudget: (userId: string, b: Omit<Budget, 'id'>) => Promise<{ ok: boolean; error?: string }>
   deleteBudget: (id: string) => Promise<void>
   addAccount: (userId: string, a: { name: string; type: string; balance: number }) => Promise<void>
   editAccount: (a: { id: string; name: string; type: string; balance: number }) => Promise<void>
@@ -30,7 +31,7 @@ interface FinanceState {
   editRecurring: (r: { id: string; name: string; type: string; amount: number; category: string; frequency: string; nextDate: string; active: boolean }) => Promise<void>
   toggleRecurring: (id: string, active: boolean) => Promise<void>
   deleteRecurring: (id: string) => Promise<void>
-  transferBetweenAccounts: (userId: string, fromAccountId: string, toAccountId: string, amount: number, description: string) => Promise<void>
+  transferBetweenAccounts: (userId: string, fromAccountId: string, toAccountId: string, amount: number, description: string) => Promise<{ ok: boolean; error?: string }>
   processRecurring: (userId: string) => Promise<string[]>
   computeBudgetRollover: () => void
 }
@@ -44,6 +45,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
   recurring: [],
   loading: false,
   budgetRollover: {},
+  processingRecurring: false,
 
   setAdapter: (adapter) => set({ adapter }),
 
@@ -59,10 +61,33 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
         adapter.db.select().from('savings_goals').where(eq('user_id', userId)).orderBy(desc('created_at')).all(),
         adapter.db.select().from('recurring_transactions').where(eq('user_id', userId)).orderBy(desc('created_at')).all(),
       ])
+      const transactions = txData.map(formatTx)
+      let accounts = acctData.map(formatAccount)
+
+      // Lazily migrate accounts created before `opening_balance` existed:
+      // derive it once from the current stored balance minus every
+      // transaction already recorded against that account, so it becomes a
+      // stable anchor going forward. Never blocks fetchAll on failure.
+      const unmigrated = acctData.filter((raw: any) => raw.opening_balance === null || raw.opening_balance === undefined)
+      if (unmigrated.length > 0) {
+        for (const raw of unmigrated) {
+          const spent = transactions
+            .filter((t) => t.accountId === raw.id)
+            .reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0)
+          const opening = roundMoney((raw.balance ?? 0) - spent)
+          try {
+            await adapter.db.update('accounts').set({ opening_balance: opening }).where(eq('id', raw.id))
+          } catch (err) {
+            console.error('[financeStore] opening_balance migration failed for account', raw.id, err)
+          }
+          accounts = accounts.map((a) => (a.id === raw.id ? { ...a, openingBalance: opening } : a))
+        }
+      }
+
       set({
-        transactions: txData.map(formatTx),
+        transactions,
         budgets: bData.map(formatBudget),
-        accounts: acctData.map(formatAccount),
+        accounts,
         savingsGoals: goalData.map(formatGoal),
         recurring: recData.map(formatRecurring),
         loading: false,
@@ -83,111 +108,130 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     await adapter.db.insert('transactions').values({ id, user_id: userId, type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId ?? null, flexibility: t.flexibility ?? 'flexible', created_at: isoNow() })
 
     if (t.accountId) {
-      const delta = t.type === 'income' ? t.amount : -t.amount
-      const acct = get().accounts.find((a) => a.id === t.accountId)
-      if (acct) {
-        const newBal = acct.balance + delta
-        await adapter.db.update('accounts').set({ balance: newBal }).where(eq('id', t.accountId))
-        set((s) => ({ accounts: s.accounts.map((a) => a.id === t.accountId ? { ...a, balance: newBal } : a) }))
-      }
+      set((s) => ({ transactions: [{ id, type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, accountId: t.accountId ?? null, flexibility: (t.flexibility ?? 'flexible') as Transaction['flexibility'], createdAt: isoNow() }, ...s.transactions] }))
+      await recalcAccountBalance(get, set, t.accountId)
     }
 
     await get().fetchAll(userId)
   },
 
   editTransaction: async (t) => {
-    const { adapter, transactions, accounts } = get()
+    const { adapter } = get()
     if (!adapter) return
 
-    const oldTx = transactions.find((x) => x.id === t.id)
+    const oldTx = get().transactions.find((x) => x.id === t.id)
 
     await adapter.db.update('transactions').set({ type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, account_id: t.accountId, flexibility: t.flexibility ?? 'flexible' }).where(eq('id', t.id))
-
-    if (oldTx) {
-      const reverseOld = oldTx.accountId ? (oldTx.type === 'income' ? -oldTx.amount : oldTx.amount) : 0
-      const applyNew = t.accountId ? (t.type === 'income' ? t.amount : -t.amount) : 0
-
-      const affectedIds = new Set<string>()
-      if (oldTx.accountId) affectedIds.add(oldTx.accountId)
-      if (t.accountId) affectedIds.add(t.accountId)
-
-      for (const acctId of affectedIds) {
-        const acct = accounts.find((a) => a.id === acctId)
-        if (!acct) continue
-        let delta = 0
-        if (acctId === oldTx.accountId) delta += reverseOld
-        if (acctId === t.accountId) delta += applyNew
-        if (delta !== 0) {
-          const newBal = acct.balance + delta
-          await adapter.db.update('accounts').set({ balance: newBal }).where(eq('id', acctId))
-          set((s) => ({ accounts: s.accounts.map((a) => a.id === acctId ? { ...a, balance: newBal } : a) }))
-        }
-      }
-    }
 
     set((s) => ({
       transactions: s.transactions.map((x) =>
         x.id === t.id ? { ...x, type: t.type as Transaction['type'], amount: t.amount, category: t.category, description: t.description, date: t.date, accountId: t.accountId, flexibility: (t.flexibility ?? x.flexibility ?? 'flexible') as Transaction['flexibility'] } : x
       ),
     }))
+
+    if (oldTx) {
+      const affectedIds = new Set<string>()
+      if (oldTx.accountId) affectedIds.add(oldTx.accountId)
+      if (t.accountId) affectedIds.add(t.accountId)
+      for (const acctId of affectedIds) {
+        await recalcAccountBalance(get, set, acctId)
+      }
+    }
+
+    get().computeBudgetRollover()
   },
 
   deleteTransaction: async (id) => {
-    const { adapter, transactions } = get()
+    const { adapter } = get()
     if (!adapter) return
 
-    const tx = transactions.find((x) => x.id === id)
+    const tx = get().transactions.find((x) => x.id === id)
 
     await adapter.db.delete('transactions').where(eq('id', id))
     set((s) => ({ transactions: s.transactions.filter((x) => x.id !== id) }))
 
     if (tx?.accountId) {
-      const delta = tx.type === 'income' ? -tx.amount : tx.amount
-      const acct = get().accounts.find((a) => a.id === tx.accountId)
-      if (acct) {
-        const newBal = acct.balance + delta
-        await adapter.db.update('accounts').set({ balance: newBal }).where(eq('id', tx.accountId))
-        set((s) => ({ accounts: s.accounts.map((a) => a.id === tx.accountId ? { ...a, balance: newBal } : a) }))
-      }
+      await recalcAccountBalance(get, set, tx.accountId)
     }
+
+    // Unlink any note pointing at this transaction, so it doesn't keep a
+    // dangling linked_transaction_id forever.
+    try {
+      const nStore = (await import('./notesStore')).useNotesStore
+      const linked = nStore.getState().notes.filter((n: any) => n.linkedTransactionId === id)
+      for (const n of linked) {
+        await adapter.db.update('notes').set({ linked_transaction_id: null }).where(eq('id', n.id))
+        nStore.setState({ notes: nStore.getState().notes.map((x: any) => (x.id === n.id ? { ...x, linkedTransactionId: null } : x)) })
+      }
+    } catch {}
+
+    get().computeBudgetRollover()
   },
 
   addBudget: async (userId, b) => {
-    const { adapter } = get()
-    if (!adapter) return
+    const { adapter, budgets } = get()
+    if (!adapter) return { ok: false, error: 'Database tidak tersedia' }
+    if (!Number.isFinite(b.limit) || b.limit <= 0) return { ok: false, error: 'Limit harus lebih dari 0' }
+    if (budgets.some((x) => x.category.trim().toLowerCase() === b.category.trim().toLowerCase())) {
+      return { ok: false, error: 'Budget untuk kategori ini sudah ada' }
+    }
     const id = generateId()
-    await adapter.db.insert('budgets').values({ id, user_id: userId, category: b.category, limit: b.limit })
+    await adapter.db.insert('budgets').values({ id, user_id: userId, category: b.category, limit: roundMoney(b.limit) })
     await get().fetchAll(userId)
+    return { ok: true }
   },
 
   deleteBudget: async (id) => {
     const { adapter } = get()
     if (!adapter) return
     await adapter.db.delete('budgets').where(eq('id', id))
+    const deleted = get().budgets.find((x) => x.id === id)
     set((s) => ({ budgets: s.budgets.filter((x) => x.id !== id) }))
+    if (deleted) {
+      set((s) => {
+        const rollover = { ...s.budgetRollover }
+        delete rollover[deleted.category]
+        return { budgetRollover: rollover }
+      })
+    }
   },
 
   addAccount: async (userId, a) => {
     const { adapter } = get()
     if (!adapter) return
     const id = generateId()
-    await adapter.db.insert('accounts').values({ id, user_id: userId, name: a.name, type: a.type, balance: a.balance, created_at: isoNow() })
+    const balance = roundMoney(a.balance)
+    await adapter.db.insert('accounts').values({ id, user_id: userId, name: a.name, type: a.type, balance, opening_balance: balance, created_at: isoNow() })
     await get().fetchAll(userId)
   },
 
   editAccount: async (a) => {
-    const { adapter } = get()
+    const { adapter, transactions, accounts } = get()
     if (!adapter) return
-    await adapter.db.update('accounts').set({ name: a.name, type: a.type, balance: a.balance }).where(eq('id', a.id))
-    set((s) => ({ accounts: s.accounts.map((x) => (x.id === a.id ? { ...x, name: a.name, type: a.type as Account['type'], balance: a.balance } : x)) }))
+    const existing = accounts.find((x) => x.id === a.id)
+    // The user is directly overriding the displayed balance — re-anchor
+    // openingBalance so future recalculation still lands on this value.
+    const spent = transactions
+      .filter((t) => t.accountId === a.id)
+      .reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0)
+    const newBalance = roundMoney(a.balance)
+    const newOpening = existing ? roundMoney(newBalance - spent) : newBalance
+    await adapter.db.update('accounts').set({ name: a.name, type: a.type, balance: newBalance, opening_balance: newOpening }).where(eq('id', a.id))
+    set((s) => ({ accounts: s.accounts.map((x) => (x.id === a.id ? { ...x, name: a.name, type: a.type as Account['type'], balance: newBalance, openingBalance: newOpening } : x)) }))
   },
 
   deleteAccount: async (id) => {
     const { adapter } = get()
     if (!adapter) return
     const linked = get().transactions.filter((t) => t.accountId === id)
-    for (const tx of linked) { await adapter.db.update('transactions').set({ account_id: null }).where(eq('id', tx.id)) }
-    set((s) => ({ transactions: s.transactions.map((t) => t.accountId === id ? { ...t, accountId: null } : t) }))
+    for (const tx of linked) {
+      try {
+        await adapter.db.update('transactions').set({ account_id: null }).where(eq('id', tx.id))
+      } catch (err) {
+        console.error('[financeStore] failed to unlink transaction from deleted account', tx.id, err)
+      }
+    }
+    set((s) => ({ transactions: s.transactions.map((t) => (t.accountId === id ? { ...t, accountId: null } : t)) }))
     await adapter.db.delete('accounts').where(eq('id', id))
     set((s) => ({ accounts: s.accounts.filter((x) => x.id !== id) }))
   },
@@ -196,16 +240,18 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const { adapter } = get()
     if (!adapter) return
     const id = generateId()
-    await adapter.db.insert('savings_goals').values({ id, user_id: userId, name: g.name, target_amount: g.targetAmount, saved_amount: g.savedAmount, deadline: g.deadline ?? null, created_at: isoNow() })
+    await adapter.db.insert('savings_goals').values({ id, user_id: userId, name: g.name, target_amount: roundMoney(g.targetAmount), saved_amount: roundMoney(g.savedAmount), deadline: g.deadline ?? null, created_at: isoNow() })
     await get().fetchAll(userId)
   },
 
   editSavingsGoal: async (g) => {
     const { adapter } = get()
     if (!adapter) return
-    await adapter.db.update('savings_goals').set({ name: g.name, target_amount: g.targetAmount, saved_amount: g.savedAmount, deadline: g.deadline ?? null }).where(eq('id', g.id))
+    const targetAmount = roundMoney(g.targetAmount)
+    const savedAmount = roundMoney(g.savedAmount)
+    await adapter.db.update('savings_goals').set({ name: g.name, target_amount: targetAmount, saved_amount: savedAmount, deadline: g.deadline ?? null }).where(eq('id', g.id))
     set((s) => ({
-      savingsGoals: s.savingsGoals.map((x) => (x.id === g.id ? { ...x, name: g.name, targetAmount: g.targetAmount, savedAmount: g.savedAmount, deadline: g.deadline } : x)),
+      savingsGoals: s.savingsGoals.map((x) => (x.id === g.id ? { ...x, name: g.name, targetAmount, savedAmount, deadline: g.deadline } : x)),
     }))
   },
 
@@ -220,7 +266,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const { adapter } = get()
     if (!adapter) return
     const id = generateId()
-    await adapter.db.insert('recurring_transactions').values({ id, user_id: userId, name: r.name, type: r.type, amount: r.amount, category: r.category, frequency: r.frequency, next_date: r.nextDate, active: r.active ? 1 : 0, created_at: isoNow() })
+    await adapter.db.insert('recurring_transactions').values({ id, user_id: userId, name: r.name, type: r.type, amount: roundMoney(r.amount), category: r.category, frequency: r.frequency, next_date: r.nextDate, active: r.active ? 1 : 0, created_at: isoNow() })
     await get().fetchAll(userId)
   },
 
@@ -234,12 +280,13 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
   editRecurring: async (r) => {
     const { adapter } = get()
     if (!adapter) return
+    const amount = roundMoney(r.amount)
     await adapter.db.update('recurring_transactions').set({
-      name: r.name, type: r.type, amount: r.amount, category: r.category,
+      name: r.name, type: r.type, amount, category: r.category,
       frequency: r.frequency, next_date: r.nextDate, active: r.active ? 1 : 0,
     }).where(eq('id', r.id))
     set((s) => ({
-      recurring: s.recurring.map((x) => (x.id === r.id ? { ...x, name: r.name, type: r.type as RecurringTransaction['type'], amount: r.amount, category: r.category, frequency: r.frequency as RecurringTransaction['frequency'], nextDate: r.nextDate, active: r.active } : x)),
+      recurring: s.recurring.map((x) => (x.id === r.id ? { ...x, name: r.name, type: r.type as RecurringTransaction['type'], amount, category: r.category, frequency: r.frequency as RecurringTransaction['frequency'], nextDate: r.nextDate, active: r.active } : x)),
     }))
   },
 
@@ -251,69 +298,80 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
   },
 
   transferBetweenAccounts: async (userId, fromAccountId, toAccountId, amount, description) => {
-    const { adapter, accounts } = get()
-    if (!adapter) return
-    if (fromAccountId === toAccountId) return
-    if (amount <= 0) return
+    const { adapter } = get()
+    if (!adapter) return { ok: false, error: 'Database tidak tersedia' }
+    if (fromAccountId === toAccountId) return { ok: false, error: 'Akun asal dan tujuan tidak boleh sama' }
+    if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: 'Jumlah transfer tidak valid' }
 
-    const fromAcct = accounts.find((a) => a.id === fromAccountId)
-    const toAcct = accounts.find((a) => a.id === toAccountId)
-    if (!fromAcct || !toAcct) return
-
-    // Prevent overdraft on non-credit accounts
-    if (fromAcct.type !== 'credit' && fromAcct.balance < amount) return
-
-    const fromNew = fromAcct.balance - amount
-    const toNew = toAcct.balance + amount
-
-    await adapter.db.update('accounts').set({ balance: fromNew }).where(eq('id', fromAccountId))
-    await adapter.db.update('accounts').set({ balance: toNew }).where(eq('id', toAccountId))
+    // Re-read fresh state right before the check (not a snapshot captured
+    // earlier) so two rapid transfers can't both pass the overdraft check
+    // against the same stale balance.
+    const fromAcct = get().accounts.find((a) => a.id === fromAccountId)
+    const toAcct = get().accounts.find((a) => a.id === toAccountId)
+    if (!fromAcct || !toAcct) return { ok: false, error: 'Akun tidak ditemukan' }
+    if (fromAcct.type !== 'credit' && fromAcct.balance < amount) return { ok: false, error: 'Saldo tidak mencukupi' }
 
     const today = todayStr()
     const txId1 = generateId()
     const txId2 = generateId()
+    // Ledger rows are written first — if the process dies before the balance
+    // recompute below runs, the transaction history (source of truth) is
+    // still complete and correct; balance just needs a recalc on next load.
     await adapter.db.insert('transactions').values({ id: txId1, user_id: userId, type: 'expense', amount, category: 'Transfer', description: `Transfer to ${toAcct.name}${description ? ': ' + description : ''}`, date: today, account_id: fromAccountId, flexibility: 'fixed', created_at: isoNow() })
     await adapter.db.insert('transactions').values({ id: txId2, user_id: userId, type: 'income', amount, category: 'Transfer', description: `Transfer from ${fromAcct.name}${description ? ': ' + description : ''}`, date: today, account_id: toAccountId, flexibility: 'fixed', created_at: isoNow() })
 
     set((s) => ({
-      accounts: s.accounts.map((a) => {
-        if (a.id === fromAccountId) return { ...a, balance: fromNew }
-        if (a.id === toAccountId) return { ...a, balance: toNew }
-        return a
-      }),
+      transactions: [
+        { id: txId2, type: 'income', amount, category: 'Transfer', description: `Transfer from ${fromAcct.name}${description ? ': ' + description : ''}`, date: today, accountId: toAccountId, flexibility: 'fixed', createdAt: isoNow() },
+        { id: txId1, type: 'expense', amount, category: 'Transfer', description: `Transfer to ${toAcct.name}${description ? ': ' + description : ''}`, date: today, accountId: fromAccountId, flexibility: 'fixed', createdAt: isoNow() },
+        ...s.transactions,
+      ],
     }))
 
+    try {
+      await recalcAccountBalance(get, set, fromAccountId)
+      await recalcAccountBalance(get, set, toAccountId)
+    } catch (err) {
+      console.error('[financeStore] balance recalc failed after transfer — ledger is correct, refresh to resync balances', err)
+    }
+
     await get().fetchAll(userId)
+    return { ok: true }
   },
 
   processRecurring: async (userId) => {
-    const { adapter, recurring } = get()
-    if (!adapter) return []
-    const now = new Date()
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const processed: string[] = []
-    const MAX_RECURRING_INSERT = 366 // safety cap: at most ~1 year of daily entries per recurring item
-    for (const r of recurring) {
-      if (!r.active) continue
-      let currentNextDate = r.nextDate
-      let insertedCount = 0
-      while (currentNextDate <= today && insertedCount < MAX_RECURRING_INSERT) {
-        const txId = generateId()
-        await adapter.db.insert('transactions').values({
-          id: txId, user_id: userId, type: r.type, amount: r.amount, category: r.category,
-          description: `[Recurring] ${r.name}`, date: currentNextDate, account_id: null, flexibility: 'flexible', created_at: isoNow(),
-        })
-        currentNextDate = advanceDate(currentNextDate, r.frequency)
-        insertedCount++
+    const { adapter, recurring, processingRecurring } = get()
+    if (!adapter || processingRecurring) return []
+    set({ processingRecurring: true })
+    try {
+      const now = new Date()
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const processed: string[] = []
+      const MAX_RECURRING_INSERT = 366 // safety cap: at most ~1 year of daily entries per recurring item
+      for (const r of recurring) {
+        if (!r.active) continue
+        let currentNextDate = r.nextDate
+        let insertedCount = 0
+        while (currentNextDate <= today && insertedCount < MAX_RECURRING_INSERT) {
+          const txId = generateId()
+          await adapter.db.insert('transactions').values({
+            id: txId, user_id: userId, type: r.type, amount: r.amount, category: r.category,
+            description: `[Recurring] ${r.name}`, date: currentNextDate, account_id: null, flexibility: 'flexible', created_at: isoNow(),
+          })
+          currentNextDate = advanceDate(currentNextDate, r.frequency)
+          insertedCount++
+        }
+        if (insertedCount > 0) {
+          await adapter.db.update('recurring_transactions').set({ next_date: currentNextDate }).where(eq('id', r.id))
+          set((s) => ({ recurring: s.recurring.map((x) => (x.id === r.id ? { ...x, nextDate: currentNextDate } : x)) }))
+          processed.push(r.name)
+        }
       }
-      if (insertedCount > 0) {
-        await adapter.db.update('recurring_transactions').set({ next_date: currentNextDate }).where(eq('id', r.id))
-        set((s) => ({ recurring: s.recurring.map((x) => x.id === r.id ? { ...x, nextDate: currentNextDate } : x) }))
-        processed.push(r.name)
-      }
+      if (processed.length > 0) await get().fetchAll(userId)
+      return processed
+    } finally {
+      set({ processingRecurring: false })
     }
-    if (processed.length > 0) await get().fetchAll(userId)
-    return processed
   },
 
   computeBudgetRollover: () => {
@@ -326,12 +384,32 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
       const spent = transactions
         .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(lastMonthKey))
         .reduce((s, t) => s + t.amount, 0)
-      const unused = Math.max(0, b.limit - spent)
+      const unused = Math.max(0, roundMoney(b.limit - spent))
       if (unused > 0) rollover[b.category] = unused
     })
     set({ budgetRollover: rollover })
   },
 }))
+
+/** Recompute one account's balance from openingBalance + all its current transactions, and persist it. Structurally immune to drift/desync since it never accumulates a delta on top of a possibly-stale value. */
+async function recalcAccountBalance(
+  get: () => FinanceState,
+  set: (partial: Partial<FinanceState> | ((s: FinanceState) => Partial<FinanceState>)) => void,
+  accountId: string,
+): Promise<void> {
+  const { adapter, accounts, transactions } = get()
+  if (!adapter) return
+  const acct = accounts.find((a) => a.id === accountId)
+  if (!acct) return
+  const opening = acct.openingBalance ?? acct.balance
+  const sum = transactions
+    .filter((t) => t.accountId === accountId)
+    .reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0)
+  const newBalance = roundMoney(opening + sum)
+  if (newBalance === acct.balance) return
+  await adapter.db.update('accounts').set({ balance: newBalance }).where(eq('id', accountId))
+  set((s) => ({ accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, balance: newBalance } : a)) }))
+}
 
 function formatTx(t: any): Transaction {
   return { id: t.id, type: t.type, amount: t.amount, category: t.category, description: t.description ?? '', date: t.date, accountId: t.account_id ?? null, flexibility: t.flexibility ?? 'flexible', createdAt: t.created_at }
@@ -342,7 +420,7 @@ function formatBudget(b: any): Budget {
 }
 
 function formatAccount(a: any): Account {
-  return { id: a.id, name: a.name, type: a.type, balance: a.balance ?? 0, createdAt: a.created_at }
+  return { id: a.id, name: a.name, type: a.type, balance: a.balance ?? 0, openingBalance: a.opening_balance ?? a.balance ?? 0, createdAt: a.created_at }
 }
 
 function formatGoal(g: any): SavingsGoal {

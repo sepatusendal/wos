@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { useNetWorthStore } from '../../stores/netWorthStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruModal } from '../../components'
@@ -46,6 +47,8 @@ export default function NetWorthPage() {
 
   const save = async () => {
     if (!userId) return
+    if (!entryDate) { toast.error('Tanggal wajib diisi'); return }
+    if (entryDate > todayStr()) { toast.error('Tanggal tidak boleh di masa depan'); return }
     const b = { cash: Number(cash) || 0, investments: Number(investments) || 0, property: Number(property) || 0, otherAssets: Number(otherAssets) || 0, mortgage: Number(mortgage) || 0, loans: Number(loans) || 0, creditCards: Number(creditCards) || 0, otherLiabilities: Number(otherLiabilities) || 0 }
     const ta = b.cash + b.investments + b.property + b.otherAssets
     const tl = b.mortgage + b.loans + b.creditCards + b.otherLiabilities
@@ -129,21 +132,29 @@ export default function NetWorthPage() {
       <NeubruModal open={showModal} onClose={() => setShowModal(false)} title="Catat Net Worth">
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Tanggal</label>
-          <NeubruInput value={entryDate} onChange={setEntryDate} type="date" />
+          <input
+            type="date"
+            className="nb-input"
+            value={entryDate}
+            max={todayStr()}
+            onChange={(e) => setEntryDate(e.target.value)}
+            onBlur={(e) => { const v = e.target.value; if (v !== entryDate) setEntryDate(v) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') save() }}
+          />
         </div>
         <h3 className="text-sm font-bold text-nb-green mb-3">ASET</h3>
         <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Cash</label><NeubruInput value={cash} onChange={setCash} type="number" placeholder="0" /></div>
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Investasi</label><NeubruInput value={investments} onChange={setInvestments} type="number" placeholder="0" /></div>
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Properti</label><NeubruInput value={property} onChange={setProperty} type="number" placeholder="0" /></div>
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Aset Lain</label><NeubruInput value={otherAssets} onChange={setOtherAssets} type="number" placeholder="0" /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Cash</label><NeubruInput value={cash} onChange={setCash} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Investasi</label><NeubruInput value={investments} onChange={setInvestments} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Properti</label><NeubruInput value={property} onChange={setProperty} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Aset Lain</label><NeubruInput value={otherAssets} onChange={setOtherAssets} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
         </div>
         <h3 className="text-sm font-bold text-nb-red mb-3">LIABILITAS</h3>
         <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">KPR</label><NeubruInput value={mortgage} onChange={setMortgage} type="number" placeholder="0" /></div>
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Pinjaman</label><NeubruInput value={loans} onChange={setLoans} type="number" placeholder="0" /></div>
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Kartu Kredit</label><NeubruInput value={creditCards} onChange={setCreditCards} type="number" placeholder="0" /></div>
-          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Liab Lain</label><NeubruInput value={otherLiabilities} onChange={setOtherLiabilities} type="number" placeholder="0" /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">KPR</label><NeubruInput value={mortgage} onChange={setMortgage} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Pinjaman</label><NeubruInput value={loans} onChange={setLoans} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Kartu Kredit</label><NeubruInput value={creditCards} onChange={setCreditCards} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
+          <div className="flex flex-col gap-1.5"><label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Liab Lain</label><NeubruInput value={otherLiabilities} onChange={setOtherLiabilities} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
         </div>
         <NeubruBtn color="purple" onClick={save}>💾 Simpan</NeubruBtn>
       </NeubruModal>

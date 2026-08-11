@@ -1,4 +1,4 @@
-import type { QueryBuilder, DatabaseAdapter, Condition, OrderBy } from '../adapter'
+import type { QueryBuilder, DatabaseAdapter, Condition, OrderBy, AuthResult } from '../adapter'
 
 const DEFAULT_ENDPOINT = '/api/db'
 
@@ -111,5 +111,11 @@ export function createHttpAdapter(options?: string | HttpAdapterOptions): Databa
   return {
     db,
     async init() {},
+    async login(username: string, password: string): Promise<AuthResult> {
+      return api({ operation: 'login', username, password })
+    },
+    async register(username: string, password: string): Promise<AuthResult> {
+      return api({ operation: 'register', username, password })
+    },
   }
 }

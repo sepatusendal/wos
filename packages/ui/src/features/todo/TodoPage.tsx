@@ -51,7 +51,22 @@ export default function TodoPage() {
     if (filter === 'active') r = r.filter((t) => !t.completed)
     if (filter === 'completed') r = r.filter((t) => t.completed)
     if (tagFilter) r = r.filter((t) => t.tags.includes(tagFilter))
-    if (search) r = r.filter((t) => t.title.toLowerCase().includes(search.toLowerCase()))
+    if (search) {
+      const q = search.toLowerCase()
+      // A todo counts as a match if it matches directly OR one of its descendants does,
+      // so a matching subtask stays visible (with its parent kept as a container to nest under).
+      const byId = new Map(todos.map((t) => [t.id, t]))
+      const keep = new Set<string>()
+      r.filter((t) => t.title.toLowerCase().includes(q)).forEach((t) => {
+        keep.add(t.id)
+        let p = t.parentId ?? null
+        while (p && !keep.has(p)) {
+          keep.add(p)
+          p = byId.get(p)?.parentId ?? null
+        }
+      })
+      r = todos.filter((t) => keep.has(t.id))
+    }
     return r
   }, [todos, filter, tagFilter, search])
 

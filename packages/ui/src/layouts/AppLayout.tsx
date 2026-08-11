@@ -5,8 +5,10 @@ import LoadingSpinner from '../components/LoadingSpinner'
 import PageTransition from '../components/PageTransition'
 import ErrorBoundary from '../components/ErrorBoundary'
 import CommandPalette from '../components/CommandPalette'
+import WeeklyReflection from '../components/WeeklyReflection'
 import { useVaultStore } from '../stores/vaultStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useAchievementStore } from '../stores/achievementStore'
 
 interface Props {
   children?: ReactNode
@@ -38,6 +40,9 @@ export default function AppLayout({ children }: Props) {
   const [loading, setLoading] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Weekly reflection prompt only on Sunday; the component itself skips weeks
+  // that were already saved/skipped (localStorage `wos_weekly_reflection_*`).
+  const [isSunday] = useState(() => new Date().getDay() === 0)
 
   const navigate = useCallback(async (p: PageId) => {
     setPage(p)
@@ -51,6 +56,9 @@ export default function AppLayout({ children }: Props) {
       setPageError(e?.message || 'Gagal memuat halaman')
     }
     setLoading(false)
+    // Cheap + synchronous — re-check unlock conditions against whatever
+    // data every store currently holds each time the user changes page.
+    try { useAchievementStore.getState().checkAll() } catch {}
   }, [])
 
   // Load dashboard by default
@@ -59,6 +67,18 @@ export default function AppLayout({ children }: Props) {
       navigate('dashboard')
     }
   }, [PageComp, loading, navigate])
+
+  // ── Cmd+K / Ctrl+K opens the command palette ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        ;(window as any).__wosCommandPalette?.toggle?.()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   // ── Auto-lock timer ──
   useEffect(() => {
@@ -115,6 +135,7 @@ export default function AppLayout({ children }: Props) {
       </main>
       <Toaster position="top-right" richColors />
       <CommandPalette onNavigate={navigate} />
+      {isSunday && <WeeklyReflection trigger />}
     </div>
   )
 }

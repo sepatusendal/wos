@@ -14,19 +14,29 @@ interface DailyQuest {
 }
 
 interface LevelState {
+  currentUserId: string | null
   xp: number
   level: number
   skillPoints: number
   skills: SkillLevels
   dailyQuests: DailyQuest[]
   dailyQuestDate: string
+  setUser: (userId: string | null) => void
   addXP: (amount: number) => void
   spendSkillPoint: (tree: 'wealth' | 'vitality' | 'wisdom') => void
   completeQuest: (id: string) => void
   generateDailyQuests: (userId: string) => void
 }
 
-const STORAGE_KEY = 'wos_level'
+// Namespaced per user — a single shared `wos_level` key meant two accounts
+// on the same device/browser saw and could "complete" each other's level,
+// XP, skills and daily quests.
+const STORAGE_PREFIX = 'wos_level_'
+// Pre-namespacing key. Kept only so existing progress can be migrated once.
+const LEGACY_STORAGE_KEY = 'wos_level'
+function storageKeyFor(userId: string): string {
+  return `${STORAGE_PREFIX}${userId}`
+}
 
 function todayStr(): string {
   const d = new Date()
@@ -73,9 +83,9 @@ interface PersistedState {
   totalSkillPointsEarned: number
 }
 
-function load(): PersistedState {
+function load(userId: string | null): PersistedState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = userId ? localStorage.getItem(storageKeyFor(userId)) : null
     if (raw) {
       const parsed = JSON.parse(raw)
       return {
@@ -102,9 +112,26 @@ function load(): PersistedState {
   }
 }
 
-function save(state: PersistedState) {
+function save(userId: string | null, state: PersistedState) {
+  if (!userId) return
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    localStorage.setItem(storageKeyFor(userId), JSON.stringify(state))
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+// One-time migration: before the per-user namespacing, all progress lived under
+// a single shared `wos_level` key. Hand it to the first user who logs in after
+// the change (browser-local gamification data was indistinguishable per user
+// anyway), then drop it so a second account can't inherit the same blob.
+function migrateLegacyKey(userId: string) {
+  try {
+    if (localStorage.getItem(storageKeyFor(userId)) !== null) return
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (!legacy) return
+    localStorage.setItem(storageKeyFor(userId), legacy)
+    localStorage.removeItem(LEGACY_STORAGE_KEY)
   } catch {
     // localStorage may be unavailable
   }
@@ -148,19 +175,42 @@ function hashStr(str: string): number {
   return hash >>> 0
 }
 
-export const useLevelStore = create<LevelState>((set, get) => {
-  const initial = load()
+function levelFromLoaded(initial: PersistedState) {
   const initialLevel = computeLevel(initial.xp)
   const totalSkillsSpent = initial.skills.wealth + initial.skills.vitality + initial.skills.wisdom
   const skillPoints = Math.max(0, initialLevel - 1 - totalSkillsSpent)
+  return { initialLevel, skillPoints }
+}
 
+export const useLevelStore = create<LevelState>((set, get) => {
   return {
-    xp: initial.xp,
-    level: initialLevel,
-    skillPoints: Math.max(0, skillPoints),
-    skills: initial.skills,
-    dailyQuests: initial.dailyQuests,
-    dailyQuestDate: initial.dailyQuestDate,
+    currentUserId: null,
+    xp: 0,
+    level: 1,
+    skillPoints: 0,
+    skills: { wealth: 0, vitality: 0, wisdom: 0 },
+    dailyQuests: [],
+    dailyQuestDate: '',
+
+    setUser: (userId: string | null) => {
+      if (get().currentUserId === userId) return
+      if (!userId) {
+        set({ currentUserId: null, xp: 0, level: 1, skillPoints: 0, skills: { wealth: 0, vitality: 0, wisdom: 0 }, dailyQuests: [], dailyQuestDate: '' })
+        return
+      }
+      migrateLegacyKey(userId)
+      const initial = load(userId)
+      const { initialLevel, skillPoints } = levelFromLoaded(initial)
+      set({
+        currentUserId: userId,
+        xp: initial.xp,
+        level: initialLevel,
+        skillPoints: Math.max(0, skillPoints),
+        skills: initial.skills,
+        dailyQuests: initial.dailyQuests,
+        dailyQuestDate: initial.dailyQuestDate,
+      })
+    },
 
     addXP: (amount: number) => {
       const state = get()
@@ -177,18 +227,13 @@ export const useLevelStore = create<LevelState>((set, get) => {
         dailyQuestDate: state.dailyQuestDate,
         totalSkillPointsEarned: state.skillPoints + state.skills.wealth + state.skills.vitality + state.skills.wisdom + pointsGained,
       }
-      save(updated)
+      save(state.currentUserId, updated)
 
       set({
         xp: newXp,
         level: newLevel,
         skillPoints: state.skillPoints + pointsGained,
       })
-
-      if (typeof window !== 'undefined') {
-        // Also check if this XP completes any daily quest
-        // This is handled separately via completeQuest
-      }
     },
 
     spendSkillPoint: (tree: 'wealth' | 'vitality' | 'wisdom') => {
@@ -204,7 +249,7 @@ export const useLevelStore = create<LevelState>((set, get) => {
         dailyQuestDate: state.dailyQuestDate,
         totalSkillPointsEarned: newSkills.wealth + newSkills.vitality + newSkills.wisdom + (state.skillPoints - 1),
       }
-      save(updated)
+      save(state.currentUserId, updated)
 
       set({
         skills: newSkills,
@@ -228,7 +273,7 @@ export const useLevelStore = create<LevelState>((set, get) => {
         dailyQuestDate: state.dailyQuestDate,
         totalSkillPointsEarned: state.skillPoints + state.skills.wealth + state.skills.vitality + state.skills.wisdom,
       }
-      save(updated)
+      save(state.currentUserId, updated)
 
       set({ dailyQuests: newQuests })
 
@@ -256,7 +301,7 @@ export const useLevelStore = create<LevelState>((set, get) => {
         dailyQuestDate: today,
         totalSkillPointsEarned: state.skillPoints + state.skills.wealth + state.skills.vitality + state.skills.wisdom,
       }
-      save(updated)
+      save(state.currentUserId, updated)
 
       set({ dailyQuests: quests, dailyQuestDate: today })
     },

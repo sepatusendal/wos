@@ -24,6 +24,8 @@ const CAT_COLORS: Record<string, 'yellow' | 'blue' | 'green' | 'pink' | 'orange'
 }
 const ACCOUNT_ICONS: Record<string, string> = { cash: '💵', bank: '🏦', ewallet: '📱', credit: '💳' }
 const FREQ_LABEL: Record<string, string> = { daily: 'Harian', weekly: 'Mingguan', monthly: 'Bulanan', yearly: 'Tahunan' }
+// How many CSV rows to render in the import preview table (display only — the full list is imported)
+const PREVIEW_ROWS = 10
 
 function monthKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -102,6 +104,11 @@ export default function FinancePage() {
   const [recEditId, setRecEditId] = useState<string | null>(null)
   const [recActive, setRecActive] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [savingBudget, setSavingBudget] = useState(false)
+  const [savingAccount, setSavingAccount] = useState(false)
+  const [savingGoal, setSavingGoal] = useState(false)
+  const [savingRecurring, setSavingRecurring] = useState(false)
+  const [savingTransfer, setSavingTransfer] = useState(false)
   const confettiFiredTx100 = useRef(false)
 
   useEffect(() => {
@@ -286,33 +293,47 @@ export default function FinancePage() {
   }
 
   const saveBudget = async () => {
-    if (!userId || !budgetCat || !budgetLimit) return
-    await addBudget(userId, { category: budgetCat, limit: Number(budgetLimit) })
-    useLevelStore.getState().addXP(20)
-    toast.success('⚡ +20 XP')
-    setBudgetLimit('')
-    setShowBudgetModal(false)
+    if (!userId || !budgetCat || !budgetLimit || savingBudget) return
+    const numLimit = Number(budgetLimit)
+    if (isNaN(numLimit) || numLimit <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
+    setSavingBudget(true)
+    try {
+      const result = await addBudget(userId, { category: budgetCat, limit: numLimit })
+      if (!result.ok) { toast.error(result.error ?? 'Gagal menyimpan'); return }
+      useLevelStore.getState().addXP(20)
+      toast.success('⚡ +20 XP')
+      setBudgetLimit('')
+      setShowBudgetModal(false)
+    } finally { setSavingBudget(false) }
   }
 
   const openAddAccount = () => { setAcctEditId(null); setAcctName(''); setAcctType('bank'); setAcctBalance(''); setShowAccountModal(true) }
   const openEditAccount = (a: any) => { setAcctEditId(a.id); setAcctName(a.name); setAcctType(a.type); setAcctBalance(String(a.balance)); setShowAccountModal(true) }
   const saveAccount = async () => {
-    if (!userId || !acctName) return
-    if (acctEditId) await editAccount({ id: acctEditId, name: acctName, type: acctType, balance: Number(acctBalance) || 0 })
-    else await addAccount(userId, { name: acctName, type: acctType, balance: Number(acctBalance) || 0 })
-    setShowAccountModal(false)
+    if (!userId || !acctName || savingAccount) return
+    setSavingAccount(true)
+    try {
+      if (acctEditId) await editAccount({ id: acctEditId, name: acctName, type: acctType, balance: Number(acctBalance) || 0 })
+      else await addAccount(userId, { name: acctName, type: acctType, balance: Number(acctBalance) || 0 })
+      setShowAccountModal(false)
+    } finally { setSavingAccount(false) }
   }
 
   const openAddGoal = () => { setGoalEditId(null); setGoalName(''); setGoalTarget(''); setGoalSaved(''); setGoalDeadline(''); setShowGoalModal(true) }
   const openEditGoal = (g: any) => { setGoalEditId(g.id); setGoalName(g.name); setGoalTarget(String(g.targetAmount)); setGoalSaved(String(g.savedAmount)); setGoalDeadline(g.deadline ?? ''); setShowGoalModal(true) }
   const saveGoal = async () => {
-    if (!userId || !goalName || !goalTarget) return
+    if (!userId || !goalName || !goalTarget || savingGoal) return
     const target = Number(goalTarget)
-    const saved = Number(goalSaved) || 0
+    if (isNaN(target) || target <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
+    const saved = goalSaved ? Number(goalSaved) : 0
+    if (isNaN(saved) || saved < 0) { toast.error('Jumlah terkumpul tidak valid'); return }
     const pct = target > 0 ? Math.round((saved / target) * 100) : 0
-    if (goalEditId) await editSavingsGoal({ id: goalEditId, name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
-    else await addSavingsGoal(userId, { name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
-    setShowGoalModal(false)
+    setSavingGoal(true)
+    try {
+      if (goalEditId) await editSavingsGoal({ id: goalEditId, name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
+      else await addSavingsGoal(userId, { name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
+      setShowGoalModal(false)
+    } finally { setSavingGoal(false) }
     if (pct >= 100) {
       ;(window as any).__wosConfetti?.()
     }
@@ -321,23 +342,32 @@ export default function FinancePage() {
   const openAddRecurring = () => { setRecEditId(null); setRecName(''); setRecType('expense'); setRecAmount(''); setRecCategory('Makan'); setRecFreq('monthly'); setRecNext(todayStr()); setRecActive(true); setShowRecurringModal(true) }
   const openEditRecurring = (r: RecurringTransaction) => { setRecEditId(r.id); setRecName(r.name); setRecType(r.type); setRecAmount(String(r.amount)); setRecCategory(r.category); setRecFreq(r.frequency); setRecNext(r.nextDate); setRecActive(r.active); setShowRecurringModal(true) }
   const saveRecurring = async () => {
-    if (!userId || !recName || !recAmount) return
-    if (recEditId) {
-      await editRecurring({ id: recEditId, name: recName, type: recType, amount: Number(recAmount), category: recCategory, frequency: recFreq, nextDate: recNext, active: recActive })
-    } else {
-      await addRecurring(userId, { name: recName, type: recType, amount: Number(recAmount), category: recCategory, frequency: recFreq as RecurringTransaction['frequency'], nextDate: recNext, active: true })
-    }
-    setShowRecurringModal(false)
+    if (!userId || !recName || !recAmount || savingRecurring) return
+    const numRecAmount = Number(recAmount)
+    if (isNaN(numRecAmount) || numRecAmount <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
+    setSavingRecurring(true)
+    try {
+      if (recEditId) {
+        await editRecurring({ id: recEditId, name: recName, type: recType, amount: numRecAmount, category: recCategory, frequency: recFreq, nextDate: recNext, active: recActive })
+      } else {
+        await addRecurring(userId, { name: recName, type: recType, amount: numRecAmount, category: recCategory, frequency: recFreq as RecurringTransaction['frequency'], nextDate: recNext, active: true })
+      }
+      setShowRecurringModal(false)
+    } finally { setSavingRecurring(false) }
   }
 
   const saveTransfer = async () => {
-    if (!userId || !transferFrom || !transferTo || !transferAmount) return
-    await transferBetweenAccounts(userId, transferFrom, transferTo, Number(transferAmount), transferDesc)
-    setShowTransferModal(false)
-    setTransferFrom('')
-    setTransferTo('')
-    setTransferAmount('')
-    setTransferDesc('')
+    if (!userId || !transferFrom || !transferTo || !transferAmount || savingTransfer) return
+    setSavingTransfer(true)
+    try {
+      const result = await transferBetweenAccounts(userId, transferFrom, transferTo, Number(transferAmount), transferDesc)
+      if (!result.ok) { toast.error(result.error ?? 'Gagal menyimpan'); return }
+      setShowTransferModal(false)
+      setTransferFrom('')
+      setTransferTo('')
+      setTransferAmount('')
+      setTransferDesc('')
+    } finally { setSavingTransfer(false) }
   }
 
   // ── CSV Import ──
@@ -356,14 +386,58 @@ export default function FinancePage() {
     return 'Lainnya'
   }
 
+  // Minimal CSV line parser: handles quoted fields, commas inside quotes, and "" escapes.
+  // Note: fields containing literal newlines (multi-line quoted fields) are not supported.
+  const parseCsvLine = (line: string): string[] => {
+    const out: string[] = []
+    let cur = ''
+    let inQuotes = false
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]!
+      if (inQuotes) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') { cur += '"'; i++ }
+          else inQuotes = false
+        } else cur += ch
+      } else if (ch === '"') {
+        inQuotes = true
+      } else if (ch === ',') {
+        out.push(cur.trim())
+        cur = ''
+      } else cur += ch
+    }
+    out.push(cur.trim())
+    // Strip stray surrounding quotes on unquoted-but-quoted-looking values (best effort)
+    return out.map((v) => v.replace(/^"|"$/g, ''))
+  }
+
+  // Returns true when a DD/MM vs MM/DD date could not be resolved with certainty.
+  const isAmbiguousDate = (raw: string): boolean => {
+    const m = raw.trim().match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+    if (!m) return false
+    const a = Number(m[1]), b = Number(m[2])
+    return a <= 12 && b <= 12 && a !== b
+  }
+
   const parseDate = (raw: string): string => {
     const cleaned = raw.trim()
-    // DD/MM/YYYY
+    // DD/MM/YYYY (Indonesian-market default when both components are ≤ 12 — genuinely ambiguous)
     const m1 = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-    if (m1) return `${m1[3]!}-${m1[2]!.padStart(2, '0')}-${m1[1]!.padStart(2, '0')}`
+    if (m1) {
+      let d = Number(m1[1]), mo = Number(m1[2])
+      // If the "month" is > 12 it must actually be MM/DD/YYYY → swap
+      if (mo > 12 && d <= 12) { const t = d; d = mo; mo = t }
+      if (mo > 12 || d > 31) return ''
+      return `${m1[3]!}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
     // DD-MM-YYYY
     const m2 = cleaned.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
-    if (m2) return `${m2[3]!}-${m2[2]!.padStart(2, '0')}-${m2[1]!.padStart(2, '0')}`
+    if (m2) {
+      let d = Number(m2[1]), mo = Number(m2[2])
+      if (mo > 12 && d <= 12) { const t = d; d = mo; mo = t }
+      if (mo > 12 || d > 31) return ''
+      return `${m2[3]!}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
     // YYYY-MM-DD (already good)
     if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned
     // YYYY/MM/DD
@@ -372,13 +446,26 @@ export default function FinancePage() {
     return ''
   }
 
+  // A lone separator followed by exactly 3 digits (1.234 / 1,234) can be either a
+  // thousands separator or a decimal point — we keep the existing default but flag it.
+  const isAmbiguousAmount = (raw: string): boolean => {
+    const cleaned = raw.trim().replace(/Rp\.?\s*/gi, '').replace(/[()\-\s]/g, '')
+    return /^\d{1,3}[.,]\d{3}$/.test(cleaned)
+  }
+
   const parseAmount = (raw: string): number => {
     let cleaned = raw.trim().replace(/Rp\.?\s*/gi, '')
     // Check if negative: (1.234) or -1.234
     const isNeg = /^\(.+\)$/.test(cleaned) || cleaned.startsWith('-')
     cleaned = cleaned.replace(/[()\-]/g, '')
+    // Unambiguous Western: comma thousands + exactly 2 decimals after final period (1,234.56)
+    if (/^\d{1,3}(,\d{3})+\.\d{2}$/.test(cleaned)) {
+      cleaned = cleaned.replace(/,/g, '')
+    // Unambiguous Indonesian: period thousands + exactly 2 decimals after final comma (1.234,56)
+    } else if (/^\d{1,3}(\.\d{3})+,\d{2}$/.test(cleaned)) {
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.')
     // Indonesian format: 1.234,56 → remove dots, replace comma with dot
-    if (/^\d{1,3}(\.\d{3})*(,\d+)?$/.test(cleaned)) {
+    } else if (/^\d{1,3}(\.\d{3})*(,\d+)?$/.test(cleaned)) {
       cleaned = cleaned.replace(/\./g, '').replace(',', '.')
     } else {
       // Western format: 1,234.56 → remove commas
@@ -395,10 +482,10 @@ export default function FinancePage() {
     reader.onload = (e) => {
       const text = e.target?.result as string
       if (!text) return
-      const lines = text.split('\n').filter((l) => l.trim())
+      const lines = text.split(/\r?\n/).filter((l) => l.trim())
       if (lines.length < 2) { toast.error('CSV file too short'); return }
 
-      const headers = lines[0]!.split(',').map((h) => h.trim().replace(/^"|"$/g, ''))
+      const headers = parseCsvLine(lines[0]!)
       // Auto-detect columns
       const map = { date: '', desc: '', amount: '', type: '' }
       for (const h of headers) {
@@ -414,7 +501,7 @@ export default function FinancePage() {
       if (!map.amount) {
         const numericCol = headers.find((h) => {
           const idx = headers.indexOf(h)
-          const val = parseFloat(lines[1]!.split(',')[idx]?.trim() ?? '')
+          const val = parseFloat(parseCsvLine(lines[1]!)[idx] ?? '')
           return !isNaN(val) && val !== 0
         })
         if (numericCol) map.amount = numericCol
@@ -424,15 +511,18 @@ export default function FinancePage() {
 
       // Parse preview rows
       const rows = lines.slice(1).map((line) => {
-        const vals = line.split(',').map((v) => v.trim().replace(/^"|"$/g, ''))
+        const vals = parseCsvLine(line)
         const obj: Record<string, string> = {}
         headers.forEach((h, i) => { obj[h] = vals[i] || '' })
         return obj
       })
 
-      const preview = rows.slice(0, 10).map((row) => {
-        const dateStr = parseDate(row[map.date] || '')
-        const amt = parseAmount(row[map.amount] || '')
+      // Parse ALL rows — the preview table slices for display only, the import uses the full list
+      const parsedRows = rows.map((row) => {
+        const rawDate = row[map.date] || ''
+        const rawAmount = row[map.amount] || ''
+        const dateStr = parseDate(rawDate)
+        const amt = parseAmount(rawAmount)
         let type: 'income' | 'expense' = amt >= 0 ? 'income' : 'expense'
         if (map.type) {
           const tRaw = (row[map.type] || '').toUpperCase()
@@ -440,10 +530,14 @@ export default function FinancePage() {
           if (/^(C|CR|CREDIT|MASUK|PEMASUKAN|INCOME)$/.test(tRaw)) type = 'income'
         }
         const desc = row[map.desc] || ''
-        return { date: dateStr, amount: Math.abs(amt), type, description: desc, category: autoDetectCategory(desc) }
+        return {
+          date: dateStr, amount: Math.abs(amt), type, description: desc, category: autoDetectCategory(desc),
+          dateAmbiguous: isAmbiguousDate(rawDate),
+          amountAmbiguous: isAmbiguousAmount(rawAmount),
+        }
       }).filter((r) => r.date && r.amount > 0)
 
-      setImportPreview(preview)
+      setImportPreview(parsedRows)
       setImportDuplicates(0)
       setShowImportModal(true)
     }
@@ -867,7 +961,7 @@ export default function FinancePage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Jumlah</label>
-            <NeubruInput value={amount} onChange={setAmount} placeholder="50000" type="number" />
+            <NeubruInput value={amount} onChange={setAmount} placeholder="50000" type="number" onKeyDown={(e) => e.key === 'Enter' && saveTx()} />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -882,7 +976,7 @@ export default function FinancePage() {
         </div>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Deskripsi</label>
-          <NeubruInput value={desc} onChange={setDesc} placeholder="Nasi padang..." />
+          <NeubruInput value={desc} onChange={setDesc} placeholder="Nasi padang..." onKeyDown={(e) => e.key === 'Enter' && saveTx()} />
         </div>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">🏦 Akun (opsional)</label>
@@ -928,7 +1022,7 @@ export default function FinancePage() {
           </div>
         </div>
         <div className="flex gap-2.5">
-          <NeubruBtn color="green" onClick={saveTx}>💾 Simpan</NeubruBtn>
+          <NeubruBtn color="green" onClick={saveTx} disabled={saving}>💾 Simpan</NeubruBtn>
         </div>
       </NeubruModal>
 
@@ -940,16 +1034,16 @@ export default function FinancePage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Limit</label>
-            <NeubruInput value={budgetLimit} onChange={setBudgetLimit} placeholder="1000000" type="number" />
+            <NeubruInput value={budgetLimit} onChange={setBudgetLimit} placeholder="1000000" type="number" onKeyDown={(e) => e.key === 'Enter' && saveBudget()} />
           </div>
         </div>
-        <NeubruBtn color="green" onClick={saveBudget}>💾 Simpan Budget</NeubruBtn>
+        <NeubruBtn color="green" onClick={saveBudget} disabled={savingBudget}>💾 Simpan Budget</NeubruBtn>
       </NeubruModal>
 
       <NeubruModal open={showAccountModal} onClose={() => setShowAccountModal(false)} title={acctEditId ? 'Edit Akun' : 'Tambah Akun'}>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Nama Akun</label>
-          <NeubruInput value={acctName} onChange={setAcctName} placeholder="BCA, Gopay, Kas..." />
+          <NeubruInput value={acctName} onChange={setAcctName} placeholder="BCA, Gopay, Kas..." onKeyDown={(e) => e.key === 'Enter' && saveAccount()} />
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
@@ -961,38 +1055,38 @@ export default function FinancePage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Saldo Awal</label>
-            <NeubruInput value={acctBalance} onChange={setAcctBalance} type="number" placeholder="0" />
+            <NeubruInput value={acctBalance} onChange={setAcctBalance} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && saveAccount()} />
           </div>
         </div>
-        <NeubruBtn color="green" onClick={saveAccount}>💾 Simpan Akun</NeubruBtn>
+        <NeubruBtn color="green" onClick={saveAccount} disabled={savingAccount}>💾 Simpan Akun</NeubruBtn>
       </NeubruModal>
 
       <NeubruModal open={showGoalModal} onClose={() => setShowGoalModal(false)} title={goalEditId ? 'Edit Tabungan' : 'Tambah Tabungan'}>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Nama Goal</label>
-          <NeubruInput value={goalName} onChange={setGoalName} placeholder="Liburan Bali..." />
+          <NeubruInput value={goalName} onChange={setGoalName} placeholder="Liburan Bali..." onKeyDown={(e) => e.key === 'Enter' && saveGoal()} />
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Target</label>
-            <NeubruInput value={goalTarget} onChange={setGoalTarget} type="number" placeholder="5000000" />
+            <NeubruInput value={goalTarget} onChange={setGoalTarget} type="number" placeholder="5000000" onKeyDown={(e) => e.key === 'Enter' && saveGoal()} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Terkumpul</label>
-            <NeubruInput value={goalSaved} onChange={setGoalSaved} type="number" placeholder="0" />
+            <NeubruInput value={goalSaved} onChange={setGoalSaved} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && saveGoal()} />
           </div>
         </div>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Deadline (opsional)</label>
           <NeubruInput value={goalDeadline} onChange={setGoalDeadline} type="date" />
         </div>
-        <NeubruBtn color="green" onClick={saveGoal}>💾 Simpan Goal</NeubruBtn>
+        <NeubruBtn color="green" onClick={saveGoal} disabled={savingGoal}>💾 Simpan Goal</NeubruBtn>
       </NeubruModal>
 
       <NeubruModal open={showRecurringModal} onClose={() => setShowRecurringModal(false)} title={recEditId ? 'Edit Transaksi Berulang' : 'Tambah Transaksi Berulang'}>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Nama</label>
-          <NeubruInput value={recName} onChange={setRecName} placeholder="Gaji, Cicilan motor, Sewa..." />
+          <NeubruInput value={recName} onChange={setRecName} placeholder="Gaji, Cicilan motor, Sewa..." onKeyDown={(e) => e.key === 'Enter' && saveRecurring()} />
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
@@ -1003,7 +1097,7 @@ export default function FinancePage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Jumlah</label>
-            <NeubruInput value={recAmount} onChange={setRecAmount} type="number" placeholder="500000" />
+            <NeubruInput value={recAmount} onChange={setRecAmount} type="number" placeholder="500000" onKeyDown={(e) => e.key === 'Enter' && saveRecurring()} />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -1029,7 +1123,7 @@ export default function FinancePage() {
             <label htmlFor="recActive" className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted cursor-pointer">Aktif</label>
           </div>
         )}
-        <NeubruBtn color="green" onClick={saveRecurring}>💾 Simpan Recurring</NeubruBtn>
+        <NeubruBtn color="green" onClick={saveRecurring} disabled={savingRecurring}>💾 Simpan Recurring</NeubruBtn>
       </NeubruModal>
 
       <NeubruModal open={showTransferModal} onClose={() => setShowTransferModal(false)} title="🔄 Transfer Antar Akun">
@@ -1049,13 +1143,13 @@ export default function FinancePage() {
             </div>
             <div className="flex flex-col gap-1.5 mb-4">
               <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Jumlah</label>
-              <NeubruInput value={transferAmount} onChange={setTransferAmount} type="number" placeholder="100000" />
+              <NeubruInput value={transferAmount} onChange={setTransferAmount} type="number" placeholder="100000" onKeyDown={(e) => e.key === 'Enter' && saveTransfer()} />
             </div>
             <div className="flex flex-col gap-1.5 mb-4">
               <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Catatan (opsional)</label>
-              <NeubruInput value={transferDesc} onChange={setTransferDesc} placeholder="Dari BCA ke Gopay..." />
+              <NeubruInput value={transferDesc} onChange={setTransferDesc} placeholder="Dari BCA ke Gopay..." onKeyDown={(e) => e.key === 'Enter' && saveTransfer()} />
             </div>
-            <NeubruBtn color="orange" onClick={saveTransfer}>🔄 Transfer</NeubruBtn>
+            <NeubruBtn color="orange" onClick={saveTransfer} disabled={savingTransfer}>🔄 Transfer</NeubruBtn>
           </>
         )}
       </NeubruModal>
@@ -1083,12 +1177,16 @@ export default function FinancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {importPreview.slice(0, 6).map((row, i) => (
-                    <tr key={i} className="border-b border-nb-border/30 hover:bg-nb-yellow/10">
-                      <td className="p-2 font-mono">{row.date}</td>
+                  {importPreview.slice(0, PREVIEW_ROWS).map((row, i) => (
+                    <tr key={i} className={`border-b border-nb-border/30 hover:bg-nb-yellow/10 ${row.dateAmbiguous || row.amountAmbiguous ? 'bg-nb-orange/10' : ''}`}>
+                      <td className="p-2 font-mono">
+                        {row.date}
+                        {row.dateAmbiguous && <span className="ml-1 text-nb-orange" title="Format tanggal ambigu (DD/MM vs MM/DD) — diasumsikan DD/MM">⚠️</span>}
+                      </td>
                       <td className="p-2 max-w-[200px] truncate">{row.description}</td>
                       <td className="p-2"><NeubruTag label={row.category} color={CAT_COLORS[row.category] || 'yellow'} /></td>
                       <td className={`p-2 text-right font-mono font-bold ${row.type === 'income' ? 'text-nb-green' : 'text-nb-red'}`}>
+                        {row.amountAmbiguous && <span className="mr-1 text-nb-orange" title="Format angka ambigu (pemisah ribuan vs desimal)">⚠️</span>}
                         {row.type === 'income' ? '+' : '-'}{formatCurrency(row.amount)}
                       </td>
                       <td className="p-2 text-center">{row.type === 'income' ? '💰' : '💳'}</td>
@@ -1097,6 +1195,11 @@ export default function FinancePage() {
                 </tbody>
               </table>
             </div>
+            {importPreview.length > PREVIEW_ROWS && (
+              <div className="text-xs text-nb-fg-muted mb-4">
+                Preview {PREVIEW_ROWS} dari {importPreview.length} baris — semua akan diimpor
+              </div>
+            )}
             {importDuplicates > 0 && (
               <div className="text-xs text-nb-fg-muted mb-4">⚠️ {importDuplicates} duplicates skipped</div>
             )}

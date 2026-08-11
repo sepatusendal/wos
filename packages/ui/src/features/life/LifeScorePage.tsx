@@ -135,8 +135,12 @@ export default function LifeScorePage() {
     const latestEntry = sortedEntries[0]
     const totalDebt = latestEntry?.totalLiabilities ?? 0
     const totalAssetNW = latestEntry?.totalAssets ?? 0
+    const hasNetWorthData = totalAssetNW > 0 || totalDebt > 0
     const debtRatio = totalAssetNW > 0 ? totalDebt / totalAssetNW : 0
-    const debtScore = Math.min(25, Math.round(Math.max(0, 1 - debtRatio) * 25))
+    // No net worth data at all = neutral (half marks), not a perfect debt ratio
+    const debtScore = hasNetWorthData
+      ? Math.min(25, Math.round(Math.max(0, 1 - debtRatio) * 25))
+      : Math.round(25 * 0.5)
 
     // NW growth (0-20)
     let growthScore = 0

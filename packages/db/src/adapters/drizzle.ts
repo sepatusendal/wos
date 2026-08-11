@@ -27,6 +27,14 @@ function sanitizeDirection(dir: string): 'ASC' | 'DESC' {
   return upper as 'ASC' | 'DESC'
 }
 
+// See the identical helper in adapters/tauri.ts: raw JS booleans must never
+// reach a SQLite driver directly, or a driver that doesn't special-case
+// booleans (like the Tauri SQL plugin) will store "true"/"false" as TEXT.
+function coerceValue(v: any): any {
+  if (typeof v === 'boolean') return v ? 1 : 0
+  return v
+}
+
 function buildCondition(c: Condition): { sql: string; params: any[] } {
   const col = sanitizeIdentifier(c.column)
   const op = sanitizeOperator(c.op)
@@ -35,9 +43,9 @@ function buildCondition(c: Condition): { sql: string; params: any[] } {
       return { sql: op.includes('NOT') ? '1=1' : '1=0', params: [] }
     }
     const placeholders = c.value.map(() => '?').join(', ')
-    return { sql: `${col} ${op} (${placeholders})`, params: c.value }
+    return { sql: `${col} ${op} (${placeholders})`, params: c.value.map(coerceValue) }
   }
-  return { sql: `${col} ${op} ?`, params: [c.value] }
+  return { sql: `${col} ${op} ?`, params: [coerceValue(c.value)] }
 }
 
 function formatOrderClause(orders: OrderBy[]): string {
@@ -118,7 +126,7 @@ export function createDrizzleAdapter(drizzleDb: any): DatabaseAdapter {
         async values(data: Record<string, any>) {
           const keys = Object.keys(data).map(sanitizeIdentifier)
           if (keys.length === 0) return
-          const vals = Object.values(data)
+          const vals = Object.values(data).map(coerceValue)
           const placeholders = vals.map(() => '?')
           const query = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders.join(', ')})`
           if (typeof drizzleDb.run === 'function') {
@@ -140,7 +148,7 @@ export function createDrizzleAdapter(drizzleDb: any): DatabaseAdapter {
               if (keys.length === 0) return
               const setClauses = keys.map((k) => `${k} = ?`)
               const { sql, params } = buildCondition(condition)
-              const vals = Object.values(data)
+              const vals = Object.values(data).map(coerceValue)
               const query = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${sql}`
               if (typeof drizzleDb.run === 'function') {
                 await drizzleDb.run(query, ...vals, ...params)

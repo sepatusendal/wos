@@ -8,3 +8,7 @@ target
 .env
 .env.local
 .env.*.local
+
+# Tauri updater signing keypair (generated locally, never commit)
+.tauri-updater-key.private
+.tauri-updater-key.private.pub

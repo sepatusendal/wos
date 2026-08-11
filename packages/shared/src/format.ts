@@ -32,6 +32,17 @@ export function formatCurrency(amount: number, currency = 'IDR', locale = 'id-ID
   return getFormatter(currency, locale).format(amount)
 }
 
+/**
+ * Round a monetary value to 2 decimal places using an epsilon-corrected
+ * round-half-up, avoiding classic binary-float artifacts (e.g. 1.005 → 1).
+ * Apply this at every write/aggregation boundary for money fields so
+ * repeated arithmetic (balance += delta, sums, conversions) never drifts.
+ */
+export function roundMoney(amount: number): number {
+  if (!Number.isFinite(amount)) return 0
+  return Math.round((amount + Number.EPSILON) * 100) / 100
+}
+
 export type CurrencyFormatter = (amount: number) => string
 
 export function createCurrencyFormatter(currency: string, locale: string): CurrencyFormatter {
@@ -141,8 +152,8 @@ export async function fetchExchangeRates(base: CurrencyCode = 'IDR'): Promise<Ex
 
 /** Approximate exchange rates → 1 unit = X IDR. Used as offline fallback. */
 const FALLBACK_RATES: Record<string, Partial<Record<CurrencyCode, number>>> = {
-  IDR: { USD: 1 / 16000, EUR: 1 / 17500, JPY: 1 / 108, SGD: 1 / 12000, GBP: 1 / 20500, MYR: 1 / 3450, AUD: 1 / 10500, CNY: 1 / 2200, KRW: 1 / 12, THB: 1 / 450, PHP: 1 / 285, VND: 1 / 0.65, INR: 1 / 192, SAR: 1 / 4270, CHF: 1 / 18400 },
-  USD: { IDR: 16000, EUR: 0.91, JPY: 148, SGD: 1.33, GBP: 0.78, MYR: 4.64, AUD: 1.52, CNY: 7.27, KRW: 1333, THB: 35.5, PHP: 56, VND: 24600, INR: 83.3, SAR: 3.75, CHF: 0.87 },
+  IDR: { IDR: 1, USD: 1 / 16000, EUR: 1 / 17500, JPY: 1 / 108, SGD: 1 / 12000, GBP: 1 / 20500, MYR: 1 / 3450, AUD: 1 / 10500, CNY: 1 / 2200, KRW: 1 / 12, THB: 1 / 450, PHP: 1 / 285, VND: 1 / 0.65, INR: 1 / 192, SAR: 1 / 4270, CHF: 1 / 18400 },
+  USD: { USD: 1, IDR: 16000, EUR: 0.91, JPY: 148, SGD: 1.33, GBP: 0.78, MYR: 4.64, AUD: 1.52, CNY: 7.27, KRW: 1333, THB: 35.5, PHP: 56, VND: 24600, INR: 83.3, SAR: 3.75, CHF: 0.87 },
 }
 
 /**
@@ -164,11 +175,11 @@ export async function convertCurrency(
     const fromToUsd = usdRates.rates[from]
     const usdToTarget = usdRates.rates[to]
     if (fromToUsd !== undefined && usdToTarget !== undefined) {
-      return amount * (1 / fromToUsd) * usdToTarget
+      return roundMoney(amount * (1 / fromToUsd) * usdToTarget)
     }
     throw new Error(`No exchange rate available for ${from} → ${to}`)
   }
-  return amount * rate
+  return roundMoney(amount * rate)
 }
 
 /** Sync conversion using pre-fetched rates (avoids async in render paths) */

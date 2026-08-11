@@ -86,7 +86,7 @@ export default function NotesPage() {
     setShowModal(true)
   }
 
-  const save = () => {
+  const save = async () => {
     if (!title.trim()) {
       toast.error('Judul harus diisi')
       return
@@ -95,15 +95,31 @@ export default function NotesPage() {
       const uid = useAuthStore.getState().userId
       if (!uid) return
       const existing = useNotesStore.getState().notes.find((n) => n.id === editId)
-      editNote({ id: editId, title: title.trim(), content, tags: existing?.tags ?? [], date: existing?.date ?? todayStr(), pinned: existing?.pinned ?? false })
+      try {
+        await editNote({
+          id: editId, title: title.trim(), content, tags: existing?.tags ?? [], date: existing?.date ?? todayStr(), pinned: existing?.pinned ?? false,
+          linkedTransactionId: linkedTxId || null,
+          linkedTodoId: linkedTodoId || null,
+        })
+      } catch (e) {
+        console.error('[NotesPage] failed to save note edit:', e)
+        toast.error('Gagal menyimpan catatan')
+        return
+      }
     } else {
       const uid = useAuthStore.getState().userId
       if (!uid) return
-      addNote(uid, {
-        title: title.trim(), content, tags: [], date: todayStr(), pinned: false,
-        linkedTransactionId: linkedTxId || null,
-        linkedTodoId: linkedTodoId || null,
-      })
+      try {
+        await addNote(uid, {
+          title: title.trim(), content, tags: [], date: todayStr(), pinned: false,
+          linkedTransactionId: linkedTxId || null,
+          linkedTodoId: linkedTodoId || null,
+        })
+      } catch (e) {
+        console.error('[NotesPage] failed to save note:', e)
+        toast.error('Gagal menyimpan catatan')
+        return
+      }
       useLevelStore.getState().addXP(15)
       toast.success('⚡ +15 XP')
     }
