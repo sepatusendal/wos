@@ -63,7 +63,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
       updated_at: now,
     }).where(eq('id', d.id))
     set((s) => ({
-      notes: s.notes.map((n) => n.id === d.id ? { ...n, title: d.title, content: d.content, tags: d.tags, date: d.date, pinned: d.pinned, linkedTodoId: d.linkedTodoId ?? n.linkedTodoId, linkedTransactionId: d.linkedTransactionId ?? n.linkedTransactionId, updatedAt: now } : n),
+      notes: s.notes.map((n) => n.id === d.id ? { ...n, title: d.title, content: d.content, tags: d.tags, date: d.date, pinned: d.pinned, linkedTodoId: d.linkedTodoId ?? null, linkedTransactionId: d.linkedTransactionId ?? null, updatedAt: now } : n),
     }))
   },
 

@@ -3,6 +3,7 @@ import type { Habit, HabitLog } from '@wos/shared'
 import { generateId, isoNow } from '@wos/shared'
 import type { DatabaseAdapter } from '@wos/db'
 import { eq, desc } from '@wos/db'
+import { useAuthStore } from './authStore'
 
 interface HabitState {
   adapter: DatabaseAdapter | null
@@ -188,7 +189,7 @@ export const useHabitStore = create<HabitState>((set, get) => ({
       } else {
         const id = generateId()
         const now = isoNow()
-        const uid = (await import('../stores/authStore')).useAuthStore.getState().userId || ''
+        const uid = useAuthStore.getState().userId || ''
         await adapter.db.insert('habit_logs').values({
           id, habit_id: habitId, user_id: uid, date, done: done ? 1 : 0, created_at: now,
         })
