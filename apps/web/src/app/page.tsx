@@ -6,6 +6,7 @@ import {
   useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore,
   useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore,
 } from '@wos/ui'
+import { Confetti } from '@wos/ui'
 import { createHttpAdapter } from '@wos/db'
 
 // Session store with sessionStorage persistence (survives page refresh)

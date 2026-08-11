@@ -185,6 +185,9 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
   deleteAccount: async (id) => {
     const { adapter } = get()
     if (!adapter) return
+    const linked = get().transactions.filter((t) => t.accountId === id)
+    for (const tx of linked) { await adapter.db.update('transactions').set({ account_id: null }).where(eq('id', tx.id)) }
+    set((s) => ({ transactions: s.transactions.map((t) => t.accountId === id ? { ...t, accountId: null } : t) }))
     await adapter.db.delete('accounts').where(eq('id', id))
     set((s) => ({ accounts: s.accounts.filter((x) => x.id !== id) }))
   },

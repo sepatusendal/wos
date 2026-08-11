@@ -15,7 +15,7 @@ export function NeubruInput({ value, onChange, placeholder, type = 'text', size 
       className={`nb-input ${size === 'sm' ? 'nb-input-sm' : ''} ${className}`.trim()}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      onBlur={(e) => { if (type === 'date') onChange((e.target as HTMLInputElement).value) }}
+      onBlur={(e) => { const v = (e.target as HTMLInputElement).value; if (type === 'date' && v !== value) onChange(v) }}
       placeholder={placeholder}
       onKeyDown={onKeyDown}
     />

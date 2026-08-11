@@ -57,7 +57,7 @@ export default function DashboardPage() {
     if (dateFilter === 'month') return transactions.filter((t) => t.date.startsWith(thisMonthKey))
     if (dateFilter === 'year') return transactions.filter((t) => t.date.startsWith(thisYear))
     if (dateFilter === 'custom' && customStart && customEnd) {
-      return transactions.filter((t) => t.date >= customStart && t.date <= customEnd)
+    if (dateFilter === 'custom' && (!customStart || !customEnd)) return transactions      return transactions.filter((t) => t.date >= customStart && t.date <= customEnd)
     }
     return transactions
   }, [transactions, dateFilter, today, thisMonthKey, thisYear, customStart, customEnd])
@@ -164,7 +164,7 @@ export default function DashboardPage() {
     if (dateFilter === 'month') return `This Month (${formatMonthShort(thisMonthKey)})`
     if (dateFilter === 'year') return `This Year (${thisYear})`
     if (dateFilter === 'custom' && customStart && customEnd) return `${formatShortDate(customStart)} – ${formatShortDate(customEnd)}`
-    return 'All Time'
+    if (dateFilter === 'custom' && (!customStart || !customEnd)) return transactions    return 'All Time'
   })()
 
   return (
