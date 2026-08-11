@@ -139,7 +139,7 @@ export default function WealthPage() {
           const hasPnL = a.buyPrice != null
           const pnlPerUnit = hasPnL ? a.unitPrice - a.buyPrice! : 0
           const pnlTotal = hasPnL ? (a.unitPrice - a.buyPrice!) * a.quantity : 0
-          const pnlPct = hasPnL && a.buyPrice! > 0 ? ((a.unitPrice - a.buyPrice!) / a.buyPrice!) * 100 : 0
+          const pnlPct = hasPnL && (a.buyPrice != null && a.buyPrice > 0) ? ((a.unitPrice - a.buyPrice) / a.buyPrice) * 100 : 0
           const isProfit = pnlPerUnit >= 0
           return (
           <div key={a.id} className="nb-list-item">

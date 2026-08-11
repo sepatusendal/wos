@@ -206,6 +206,8 @@ export default function App() {
           )
         `)
         await tauriDb.execute(`
+        try { await tauriDb.execute(`ALTER TABLE habit_logs ADD COLUMN user_id TEXT`) } catch {}
+        await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS notes (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
             content TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]',

@@ -188,8 +188,9 @@ export const useHabitStore = create<HabitState>((set, get) => ({
       } else {
         const id = generateId()
         const now = isoNow()
+        const uid = (await import('../stores/authStore')).useAuthStore.getState().userId || ''
         await adapter.db.insert('habit_logs').values({
-          id, habit_id: habitId, date, done: done ? 1 : 0, created_at: now,
+          id, habit_id: habitId, user_id: uid, date, done: done ? 1 : 0, created_at: now,
         })
         const newLog: HabitLog = { id, habitId, date, done, createdAt: now }
         set((s) => ({ logs: [...s.logs, newLog] }))

@@ -4,7 +4,7 @@ function getFormatter(currency: string, locale: string): Intl.NumberFormat {
   const key = `${currency}:${locale}`
   if (formatterCache.has(key)) return formatterCache.get(key)!
   // Determine fraction digits per currency — most use 0 for day-to-day, JPY always 0
-  const fractionDigits = currency === 'JPY' ? 0 : 0
+  const fractionDigits = currency === 'JPY' || currency === 'IDR' || currency === 'KRW' || currency === 'VND' ? 0 : 2
   try {
     const fmt = new Intl.NumberFormat(locale, {
       style: 'currency',
