@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/v2/tauri.schema.json",
   "productName": "WOS",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "identifier": "com.wira.wos",
   "build": {
     "frontendDist": "../dist",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.frankfurter.app https://api.open-meteo.com https://quote-garden.onrender.com https://api.coinpaprika.com https://query1.finance.yahoo.com https://indonesian-public-holidays.vercel.app"
     }
   },
   "bundle": {
