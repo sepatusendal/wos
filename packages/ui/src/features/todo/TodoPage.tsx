@@ -275,7 +275,14 @@ export default function TodoPage() {
         </div>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Notes</label>
-          <NeubruInput value={note} onChange={setNote} placeholder="Detail tambahan..." />
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Detail tambahan..."
+            rows={4}
+            className="border-2 border-nb-border bg-white px-3 py-2 text-sm font-medium outline-none resize-y w-full"
+            style={{ fontFamily: 'inherit' }}
+          />
         </div>
         <NeubruBtn color="green" onClick={save}>💾 Simpan</NeubruBtn>
       </NeubruModal>
