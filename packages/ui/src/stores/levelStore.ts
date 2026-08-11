@@ -152,9 +152,7 @@ export const useLevelStore = create<LevelState>((set, get) => {
   const initial = load()
   const initialLevel = computeLevel(initial.xp)
   const totalSkillsSpent = initial.skills.wealth + initial.skills.vitality + initial.skills.wisdom
-  // if we loaded from before level was tracked, recalculate
-  const recalcPoints = initialLevel - 1 - totalSkillsSpent
-  const skillPoints = recalcPoints > 0 ? initial.totalSkillPointsEarned > 0 ? (initialLevel - 1) - totalSkillsSpent : (initialLevel - 1) : 0
+  const skillPoints = Math.max(0, initialLevel - 1 - totalSkillsSpent)
 
   return {
     xp: initial.xp,

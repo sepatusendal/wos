@@ -36,7 +36,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await adapter.db.insert('users').values({ id, username, password_hash: passwordHash, created_at: isoNow() })
       set({ userId: id, username, isAuthenticated: true, isVaultLocked: true })
       return { ok: true }
-    } catch {
+    } catch (e) {
+      console.error('[auth] register failed:', e)
       return { ok: false, error: 'Username sudah dipakai' }
     }
   },
@@ -57,7 +58,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  logout: () => set({ userId: null, username: null, isAuthenticated: false, isVaultLocked: true }),
+  logout: () => {
+    set({ userId: null, username: null, isAuthenticated: false, isVaultLocked: true })
+    // Prevent cross-user data leakage: clear all other stores
+    import('../stores/financeStore').then(m => m.useFinanceStore.setState({ transactions: [], budgets: [], accounts: [], savingsGoals: [], recurring: [] }))
+    import('../stores/wealthStore').then(m => m.useWealthStore.setState({ assets: [] }))
+    import('../stores/netWorthStore').then(m => m.useNetWorthStore.setState({ entries: [] }))
+    import('../stores/todoStore').then(m => m.useTodoStore.setState({ todos: [] }))
+    import('../stores/vaultStore').then(m => m.useVaultStore.setState({ entries: [], vaultKey: null }))
+    import('../stores/subscriptionStore').then(m => m.useSubscriptionStore.setState({ subscriptions: [] }))
+    import('../stores/habitStore').then(m => m.useHabitStore.setState({ habits: [], logs: [] }))
+    import('../stores/notesStore').then(m => m.useNotesStore.setState({ notes: [] }))
+    import('../stores/settingsStore').then(m => m.useSettingsStore.setState({ settings: null, loaded: false }))
+  },
 
   lockVault: () => set({ isVaultLocked: true }),
 

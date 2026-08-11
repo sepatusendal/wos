@@ -80,7 +80,8 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
         .orderBy(desc('created_at'))
         .all()
       set({ subscriptions: data.map(formatSubscription), loading: false })
-    } catch {
+    } catch (err) {
+      console.error("[subscriptionStore] fetchAll failed:", err)
       set({ loading: false })
     }
   },
@@ -139,7 +140,7 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
   toggleActive: async (id, active) => {
     const { adapter } = get()
     if (!adapter) return
-    await adapter.db.update('subscriptions').set({ active }).where(eq('id', id))
+    await adapter.db.update('subscriptions').set({ active: active ? 1 : 0 }).where(eq('id', id))
     set((s) => ({
       subscriptions: s.subscriptions.map((x) =>
         x.id === id ? { ...x, active } as Subscription : x,

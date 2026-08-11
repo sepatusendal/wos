@@ -94,6 +94,7 @@ export default function SettingsPage() {
     setVaultSaving(false)
     if (result.ok) {
       toast.success(vaultHasPassword ? 'Password vault berhasil diubah' : 'Password vault berhasil diset!')
+      if (result.warning) toast.warning(result.warning)
       setVaultCurrentPw(''); setVaultNewPw(''); setVaultConfirmPw('')
       setVaultHasPassword(true)
     } else {

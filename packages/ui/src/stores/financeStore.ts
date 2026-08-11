@@ -256,6 +256,9 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const toAcct = accounts.find((a) => a.id === toAccountId)
     if (!fromAcct || !toAcct) return
 
+    // Prevent overdraft on non-credit accounts
+    if (fromAcct.type !== 'credit' && fromAcct.balance < amount) return
+
     const fromNew = fromAcct.balance - amount
     const toNew = toAcct.balance + amount
 

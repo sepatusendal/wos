@@ -83,8 +83,6 @@ function computeTxStreak(transactions: { date: string }[]): number {
   return streak
 }
 
-const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-
 interface AchievementState {
   unlocked: string[]
   /** no-op for API consistency with other stores */
@@ -122,7 +120,6 @@ export const useAchievementStore = create<AchievementState>((set, get) => ({
     const savingsGoals = finance.savingsGoals ?? []
     const budgets = finance.budgets ?? []
     const habits = habitSt.habits ?? []
-    const habitLogs = habitSt.logs ?? []
     const entries = nwSt.entries ?? []
     const subs = subSt.subscriptions ?? []
 
@@ -199,50 +196,7 @@ export const useAchievementStore = create<AchievementState>((set, get) => ({
 
     // 7. habit_7 & habit_30
     for (const h of habits) {
-      const hLogs = habitLogs.filter((l) => l.habitId === h.id && l.done)
-      const hDates = new Set(hLogs.map((l) => l.date))
-      let streak = 0
-      const d = new Date()
-      const today = dateStr(new Date())
-
-      while (true) {
-        const ds = dateStr(d)
-        if (ds > today) {
-          d.setDate(d.getDate() - 1)
-          continue
-        }
-
-        if (h.frequency === 'weekly') {
-          const dayName = DAY_NAMES[d.getDay()]!
-          const targetDays: string[] =
-            typeof h.targetDays === 'string'
-              ? (JSON.parse(h.targetDays as string) as string[])
-              : (h.targetDays ?? [])
-          if (!targetDays.includes(dayName)) {
-            d.setDate(d.getDate() - 1)
-            const daysBack = Math.floor(
-              (new Date().getTime() - d.getTime()) / 86400000,
-            )
-            if (daysBack > 90) break
-            continue
-          }
-        }
-
-        if (hDates.has(ds)) {
-          streak++
-          d.setDate(d.getDate() - 1)
-        } else {
-          if (ds === today && streak === 0) {
-            d.setDate(d.getDate() - 1)
-            continue
-          }
-          break
-        }
-        const daysBack = Math.floor(
-          (new Date().getTime() - d.getTime()) / 86400000,
-        )
-        if (daysBack > 400) break
-      }
+      const streak = useHabitStore.getState().getStreak(h.id)
       if (!now.includes('habit_7') && streak >= 7) {
         now.push('habit_7')
         changed = true

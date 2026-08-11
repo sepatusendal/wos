@@ -18,7 +18,7 @@ interface VaultState {
   unlock: (userId: string, password: string) => Promise<{ ok: boolean; error?: string }>
   lock: () => void
   checkVaultSetup: (userId: string) => Promise<{ hasPassword: boolean }>
-  changeVaultPassword: (userId: string, currentPassword: string | null, newPassword: string) => Promise<{ ok: boolean; error?: string }>
+  changeVaultPassword: (userId: string, currentPassword: string | null, newPassword: string) => Promise<{ ok: boolean; error?: string; warning?: string }>
   addEntry: (userId: string, e: Omit<VaultEntry, 'id' | 'createdAt'>) => Promise<void>
   editEntry: (e: { id: string; service: string; username: string; password: string; url: string; notes: string; category: string }) => Promise<void>
   deleteEntry: (id: string) => Promise<void>
@@ -38,12 +38,20 @@ export const useVaultStore = create<VaultState>((set, get) => ({
     set({ loading: true })
     try {
       const data = await adapter.db.select().from('vault_entries').where(eq('user_id', userId)).orderBy(desc('created_at')).all()
-      const decrypted = await Promise.all(data.map(async (v: any) => ({
+      const results = await Promise.allSettled(data.map(async (v: any) => ({
         id: v.id, service: v.service, username: v.username,
         password: await decrypt(v.password_encrypted, vaultKey),
         url: v.url ?? '', notes: v.notes_encrypted ? await decrypt(v.notes_encrypted, vaultKey) : '',
         category: v.category as VaultEntry['category'], createdAt: v.created_at,
       } as VaultEntry)))
+      const decrypted: VaultEntry[] = []
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          decrypted.push(r.value)
+        } else {
+          console.error('[vault] fetchAll: failed to decrypt an entry:', r.reason)
+        }
+      }
       set({ entries: decrypted, loading: false })
     } catch (err) {
       set({ loading: false, entries: [] })
@@ -154,13 +162,14 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       const newSaltB64 = bytesToBase64(newSalt)
       const { ciphertext: newVerifyToken } = await encrypt(VAULT_CANARY, newKey)
 
+      let skippedCount = 0
       // Re-encrypt all existing vault entries with new key
       if (oldKey) {
         const rawEntries = await adapter.db.select().from('vault_entries').where(eq('user_id', userId)).all()
         for (const raw of rawEntries as any[]) {
           let decryptedPassword = ''
           let decryptedNotes = ''
-          try { decryptedPassword = await decrypt(raw.password_encrypted, oldKey) } catch { continue }
+          try { decryptedPassword = await decrypt(raw.password_encrypted, oldKey) } catch { skippedCount++; continue }
           if (raw.notes_encrypted) {
             try { decryptedNotes = await decrypt(raw.notes_encrypted, oldKey) } catch {}
           }
@@ -182,6 +191,10 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       set({ vaultKey: newKey })
       try { await get().fetchAll(userId) } catch {}
 
+      if (skippedCount > 0) {
+        console.error(`[vault] ${skippedCount} entries could not be re-encrypted and are now inaccessible`)
+        return { ok: true, warning: `${skippedCount} entri gagal di-re-encrypt dan tidak bisa diakses lagi` }
+      }
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Gagal mengubah password vault' }

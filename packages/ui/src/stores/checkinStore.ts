@@ -56,6 +56,23 @@ export const useCheckinStore = create<CheckinState>((set, get) => ({
     }
     if (typeof window !== 'undefined') {
       localStorage.setItem(storageKey(), JSON.stringify(data))
+      // Clean up check-in entries older than 90 days
+      try {
+        const cutoff = new Date()
+        cutoff.setDate(cutoff.getDate() - 90)
+        const cutoffStr = cutoff.toISOString().slice(0, 10)
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i)
+          if (key && key.startsWith('checkin_')) {
+            const datePart = key.slice('checkin_'.length)
+            if (datePart < cutoffStr) {
+              localStorage.removeItem(key)
+            }
+          }
+        }
+      } catch {
+        // localStorage iteration may fail in some environments
+      }
     }
     set({
       todayChecked: true,

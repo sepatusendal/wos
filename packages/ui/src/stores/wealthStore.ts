@@ -38,7 +38,7 @@ export const useWealthStore = create<WealthState>((set, get) => ({
     try {
       const data = await adapter.db.select().from('assets').where(eq('user_id', userId)).orderBy(desc('created_at')).all()
       set({ assets: data.map(formatAsset), loading: false })
-    } catch { set({ loading: false }) }
+    } catch (err) { console.error("[wealthStore] fetchAll failed:", err); set({ loading: false }) }
   },
 
   addAsset: async (userId, a) => {

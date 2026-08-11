@@ -76,9 +76,8 @@ export const useHabitStore = create<HabitState>((set, get) => ({
       const habitsData = await adapter.db.select().from('habits').where(eq('user_id', userId)).orderBy(desc('created_at')).all()
       const habits = habitsData.map(formatHabit)
 
-      // Fetch logs for the last 90 days — since the adapter only supports eq,
-      // we fetch all logs and filter in memory (local app, manageable volume)
-      const allLogs = await adapter.db.select().from('habit_logs').all()
+      // Fetch logs scoped to this user only
+      const allLogs = await adapter.db.select().from('habit_logs').where(eq('user_id', userId)).all()
       const cutoff = daysAgo(90)
       const habitIds = new Set(habits.map((h: Habit) => h.id))
       const logs = allLogs
@@ -86,7 +85,8 @@ export const useHabitStore = create<HabitState>((set, get) => ({
         .filter((l: HabitLog) => habitIds.has(l.habitId) && l.date >= cutoff)
 
       set({ habits, logs, loading: false })
-    } catch {
+    } catch (err) {
+      console.error("[habitStore] fetchAll failed:", err)
       set({ loading: false })
     }
   },
@@ -164,7 +164,7 @@ export const useHabitStore = create<HabitState>((set, get) => ({
   toggleActive: async (id, active) => {
     const { adapter } = get()
     if (!adapter) return
-    await adapter.db.update('habits').set({ active }).where(eq('id', id))
+    await adapter.db.update('habits').set({ active: active ? 1 : 0 }).where(eq('id', id))
     set((s) => ({
       habits: s.habits.map((h) => (h.id === id ? { ...h, active } : h)),
     }))

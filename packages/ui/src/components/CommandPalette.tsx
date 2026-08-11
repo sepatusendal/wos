@@ -65,7 +65,8 @@ function saveRecent(list: RecentCommand[]) {
  *   5m    → 5000000000
  */
 function parseAmount(raw: string): number | null {
-  const cleaned = raw.replace(/\./g, '').replace(/,/g, '.').trim().toLowerCase()
+  // Preserve decimal dots (e.g. 2.5jt → 2.5), strip comma thousands
+  const cleaned = raw.replace(/,/g, '.').trim().toLowerCase()
   if (!cleaned) return null
 
   const match = cleaned.match(/^([\d.]+)\s*(rb|ribu|k|jt|juta|m|milyar|miliar)?$/)

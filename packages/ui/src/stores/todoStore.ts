@@ -30,7 +30,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     try {
       const data = await adapter.db.select().from('todos').where(eq('user_id', userId)).orderBy(desc('order')).all()
       set({ todos: data.map(formatTodo), loading: false })
-    } catch { set({ loading: false }) }
+    } catch (err) { console.error("[todoStore] fetchAll failed:", err); set({ loading: false }) }
   },
 
   addTodo: async (userId, t) => {

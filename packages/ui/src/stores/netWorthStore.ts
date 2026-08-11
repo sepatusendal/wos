@@ -28,7 +28,7 @@ export const useNetWorthStore = create<NetWorthState>((set, get) => ({
     try {
       const data = await adapter.db.select().from('net_worth_entries').where(eq('user_id', userId)).orderBy(desc('date')).all()
       set({ entries: data.map(formatEntry), loading: false })
-    } catch { set({ loading: false }) }
+    } catch (err) { console.error("[netWorthStore] fetchAll failed:", err); set({ loading: false }) }
   },
 
   addEntry: async (userId, e) => {
