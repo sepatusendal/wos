@@ -101,6 +101,7 @@ export default function FinancePage() {
   const [recNext, setRecNext] = useState(todayStr())
   const [recEditId, setRecEditId] = useState<string | null>(null)
   const [recActive, setRecActive] = useState(true)
+  const [saving, setSaving] = useState(false)
   const confettiFiredTx100 = useRef(false)
 
   useEffect(() => {
@@ -257,14 +258,17 @@ export default function FinancePage() {
   const openEdit = (t: any) => { setEditId(t.id); setType(t.type); setAmount(String(t.amount)); setCategory(t.category); setDesc(t.description); setDate(t.date); setTxAccountId(t.accountId ?? ''); setFlexibility((t.flexibility ?? 'flexible') as 'fixed' | 'flexible' | 'discretionary'); setShowTxModal(true) }
 
   const saveTx = async () => {
-    if (!userId || !amount) return
+    if (!userId || !amount || saving) return
     const numAmount = Number(amount)
     if (isNaN(numAmount) || numAmount <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
-    const oldAmount = editId ? useFinanceStore.getState().transactions.find((t) => t.id === editId)?.amount ?? 0 : 0
-    if (editId) { await editTransaction({ id: editId, type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }) }
-    else { await addTransaction(userId, { type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }); useLevelStore.getState().addXP(5); toast.success('⚡ +5 XP') }
-    if (type === 'expense') checkBudgetAlert(category, numAmount, oldAmount)
-    setShowTxModal(false)
+    setSaving(true)
+    try {
+      const oldAmount = editId ? useFinanceStore.getState().transactions.find((t) => t.id === editId)?.amount ?? 0 : 0
+      if (editId) { await editTransaction({ id: editId, type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }) }
+      else { await addTransaction(userId, { type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }); useLevelStore.getState().addXP(5); toast.success('⚡ +5 XP') }
+      if (type === 'expense') checkBudgetAlert(category, numAmount, oldAmount)
+      setShowTxModal(false)
+    } finally { setSaving(false) }
   }
 
   const checkBudgetAlert = (cat: string, newAmount: number, oldAmount = 0) => {
