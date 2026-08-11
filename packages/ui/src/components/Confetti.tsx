@@ -20,13 +20,17 @@ interface Particle {
   delay: number
 }
 
+let _particleIdCounter = 0
+
 export default function Confetti() {
   const [particles, setParticles] = useState<Particle[]>([])
   const [active, setActive] = useState(false)
 
   const fire = useCallback(() => {
+    const base = _particleIdCounter
+    _particleIdCounter += 30
     const newParticles: Particle[] = Array.from({ length: 30 }, (_, i) => ({
-      id: Date.now() + i,
+      id: base + i,
       x: Math.random() * 100,
       y: -10 - Math.random() * 20,
       color: NB_COLORS[Math.floor(Math.random() * NB_COLORS.length)]!,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useFinanceStore } from '../../stores/financeStore'
 import { useWealthStore } from '../../stores/wealthStore'
 import { useNetWorthStore } from '../../stores/netWorthStore'
@@ -95,6 +95,18 @@ export default function FirePage() {
   const [monthlySavings, setMonthlySavings] = useState(0)
   const [extraMonthly, setExtraMonthly] = useState(0)
   const [initialized, setInitialized] = useState(false)
+
+  // Track data version so we re-initialize when store data changes
+  const dataVersion = transactions.length + accounts.length + assets.length + entries.length
+  const prevDataVersion = useRef(dataVersion)
+
+  // Reset initialization flag when underlying store data changes
+  useEffect(() => {
+    if (prevDataVersion.current !== dataVersion) {
+      prevDataVersion.current = dataVersion
+      setInitialized(false)
+    }
+  }, [dataVersion])
 
   // Pre-fill from data once loaded
   useEffect(() => {

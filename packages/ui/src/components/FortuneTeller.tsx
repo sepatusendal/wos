@@ -15,6 +15,10 @@ export default function FortuneTeller() {
   const formatCurrency = useFormatCurrency()
   const [revealed, setRevealed] = useState(false)
 
+  // Deterministic jitter per month — avoids Math.random() inside useMemo
+  const monthSeed = new Date().getMonth() + new Date().getFullYear() * 12
+  const jitter = 0.95 + ((Math.abs(Math.sin(monthSeed)) * 100) % 10) / 100
+
   const fortune = useMemo((): Fortune | null => {
     const today = todayStr()
     const currentMonth = today.slice(0, 7)
@@ -45,7 +49,6 @@ export default function FortuneTeller() {
 
     const avgExpense = validExpenses.reduce((s, e) => s + e, 0) / validExpenses.length
     const avgIncome = validIncomes.reduce((s, i) => s + i, 0) / validIncomes.length
-    const jitter = 0.95 + Math.random() * 0.1 // ±5%
     const predictedExpense = Math.round(avgExpense * jitter)
     const predictedSavingsRate = avgIncome > 0 ? Math.round(((avgIncome - predictedExpense) / avgIncome) * 100) : 0
 
@@ -90,7 +93,7 @@ export default function FortuneTeller() {
     'Your financial karma is... interesting.',
   ]
 
-  const randomFortune = fortunes[Math.floor(Math.random() * fortunes.length)]
+  const randomFortune = fortunes[Math.abs(Math.floor(Math.sin(monthSeed) * fortunes.length)) % fortunes.length]
 
   if (!fortune) {
     return (

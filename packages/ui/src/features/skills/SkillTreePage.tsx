@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { NeubruCard } from '../../components'
 import { toast } from 'sonner'
 import { useLevelStore } from '../../stores/levelStore'
@@ -248,13 +249,12 @@ function DailyQuestsSection() {
   const today = new Date().toISOString().slice(0, 10)
 
   // Reset quests if it's a new day
-  if (dailyQuestDate !== today && typeof window !== 'undefined') {
-    // Will be triggered on next render
-    setTimeout(() => {
+  useEffect(() => {
+    if (dailyQuestDate !== today && typeof window !== 'undefined') {
       const userId = 'default'
       generateDailyQuests(userId)
-    }, 0)
-  }
+    }
+  }, [dailyQuestDate, today, generateDailyQuests])
 
   const doneCount = dailyQuests.filter((q) => q.done).length
   const totalCount = dailyQuests.length

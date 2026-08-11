@@ -76,6 +76,19 @@ export default function HabitPage() {
 
   // ── Computed values ─────────────────────────────────────
 
+  const [today, setToday] = useState(() => todayStr())
+
+  // Update `today` at midnight so last7Days stays current
+  useEffect(() => {
+    const now = new Date()
+    const msUntilMidnight =
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime()
+    const timer = setTimeout(() => {
+      setToday(todayStr())
+    }, msUntilMidnight + 1000)
+    return () => clearTimeout(timer)
+  }, [today])
+
   const last7Days = useMemo(() => {
     const days: { dateStr: string; label: string; dayName: string }[] = []
     for (let i = 6; i >= 0; i--) {
@@ -88,7 +101,7 @@ export default function HabitPage() {
       })
     }
     return days
-  }, [])
+  }, [today])
 
   const filteredHabits = useMemo(() => {
     if (filter === 'all') return habits

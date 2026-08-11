@@ -80,6 +80,10 @@ export const useCheckinStore = create<CheckinState>((set, get) => ({
       todayEnergy: energy,
       todayHighlight: highlight,
     })
+    // Notify other components that checkin data changed
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('wos:checkin'))
+    }
   },
 
   getTodayCheckin: () => {

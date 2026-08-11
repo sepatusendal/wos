@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNotesStore } from '../../stores/notesStore'
 import { useFinanceStore } from '../../stores/financeStore'
 import { useTodoStore } from '../../stores/todoStore'
@@ -23,20 +23,26 @@ export default function NotesPage() {
   const [linkedTodoId, setLinkedTodoId] = useState<string>('')
 
   // Ensure finance & todo data exists
+  const didFetch = useRef(false)
+
   useEffect(() => {
+    const userId = useAuthStore.getState().userId
+    if (!userId) return
+    if (didFetch.current) return
+
+    let attempted = false
     if (transactions.length === 0) {
-      const userId = useAuthStore.getState().userId
-      if (userId) {
-        fetchFinance(userId).catch(() => {})
-      }
+      fetchFinance(userId).catch(() => {})
+      attempted = true
     }
     if (todos.length === 0) {
-      const userId = useAuthStore.getState().userId
-      if (userId) {
-        fetchTodo(userId).catch(() => {})
-      }
+      fetchTodo(userId).catch(() => {})
+      attempted = true
     }
-  }, []) // eslint-disable-line
+    if (attempted) {
+      didFetch.current = true
+    }
+  }, [transactions.length, todos.length, fetchFinance, fetchTodo])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return notes

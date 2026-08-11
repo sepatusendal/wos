@@ -91,6 +91,14 @@ export default function LifeScorePage() {
     } catch { /* ignore */ }
   }, [])
 
+  // Track checkin writes so useMemos that call loadCheckinHistory() re-run
+  const [checkinVersion, setCheckinVersion] = useState(0)
+  useEffect(() => {
+    const handler = () => setCheckinVersion((v) => v + 1)
+    window.addEventListener('wos:checkin', handler)
+    return () => window.removeEventListener('wos:checkin', handler)
+  }, [])
+
   const saveSocial = useCallback((v: number) => {
     setSocialScore(v)
     try { localStorage.setItem('wos_life_social_score', String(v)) } catch { /* ignore */ }
@@ -187,7 +195,7 @@ export default function LifeScorePage() {
     const consistencyScore = Math.min(30, Math.round(consistencyRate * 100 * 0.3))
 
     return Math.min(100, completionScore + streakScore + consistencyScore)
-  }, [habits, habitLogs])
+  }, [habits, habitLogs, checkinVersion])
 
   // ── 🧠 Mind Score (0-100) ──────────────────────────────────
   const mindScore = useMemo(() => {
@@ -312,7 +320,7 @@ export default function LifeScorePage() {
     }
 
     return result
-  }, [habits, transactions, notes, todos])
+  }, [habits, transactions, notes, todos, checkinVersion])
 
   // ── Score label ────────────────────────────────────────────
   const scoreLabel = lifeScore >= 80 ? 'Excellent!' : lifeScore >= 65 ? 'Good' : lifeScore >= 45 ? 'Fair' : 'Needs Love'
