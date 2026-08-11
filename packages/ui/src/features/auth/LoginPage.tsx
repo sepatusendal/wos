@@ -85,7 +85,7 @@ export default function LoginPage({ onLoginSuccess }: Props) {
                 </label>
                 <label className="flex flex-col gap-1.5">
                   <span className="font-bold text-[0.7rem] uppercase tracking-[0.22em] text-nb-fg">Password</span>
-                  <NeubruInput value={password} onChange={setPassword} placeholder="••••••••" type="password" />
+                  <NeubruInput value={password} onChange={setPassword} placeholder="••••••••" type="password" onKeyDown={(e) => e.key === 'Enter' && handleSubmit(e as any)} />
                 </label>
               </div>
 

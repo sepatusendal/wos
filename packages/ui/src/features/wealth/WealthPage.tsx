@@ -213,7 +213,7 @@ export default function WealthPage() {
         )}
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Catatan</label>
-          <NeubruInput value={notes} onChange={setNotes} placeholder="Opsional..." />
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opsional..." rows={3} className="border-2 border-nb-border bg-white px-3 py-2 text-sm font-medium outline-none resize-y w-full" style={{ fontFamily: "inherit" }} />
         </div>
         <NeubruBtn color="blue" onClick={save}>💾 Simpan</NeubruBtn>
       </NeubruModal>

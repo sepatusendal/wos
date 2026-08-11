@@ -72,6 +72,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     } catch (err) {
       console.error('[financeStore] fetchAll failed:', err)
       set({ loading: false })
+      get().computeBudgetRollover()
     }
   },
 

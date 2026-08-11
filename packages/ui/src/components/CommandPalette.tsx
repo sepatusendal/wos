@@ -18,6 +18,13 @@ const PAGES: { id: PageId; label: string; icon: string }[] = [
   { id: 'habit', label: 'Habits', icon: '🔥' },
   { id: 'vault', label: 'Vault', icon: '🔐' },
   { id: 'todo', label: 'Todo', icon: '✅' },
+  { id: 'fire', label: 'FIRE', icon: '🚀' },
+  { id: 'notes', label: 'Notes', icon: '📝' },
+  { id: 'tools', label: 'Tools', icon: '🧮' },
+  { id: 'review', label: 'Review', icon: '🎉' },
+  { id: 'records', label: 'Records', icon: '🏅' },
+  { id: 'skills', label: 'Skills', icon: '🌟' },
+  { id: 'life', label: 'Life', icon: '🧠' },
   { id: 'settings', label: 'Settings', icon: '⚙️' },
 ]
 
