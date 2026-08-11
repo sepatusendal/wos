@@ -38,6 +38,7 @@
   },
   "plugins": {
     "updater": {
+      "pubkey": "",
       "endpoints": [
         "https://github.com/sepatusendal/wos/releases/latest/download/latest.json"
       ],

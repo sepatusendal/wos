@@ -8,7 +8,7 @@ function sanitizeIdentifier(name: string): string {
   if (!ALLOWED_IDENTIFIER.test(name)) {
     throw new Error(`Invalid SQL identifier: "${name}"`)
   }
-  return name
+  return `"${name}"`
 }
 
 function sanitizeOperator(op: string): string {
