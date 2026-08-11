@@ -253,7 +253,7 @@ export default function App() {
     )
   }
 
-  if (!adapterReady) {
+  if (!adapterReady || !windowReady) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-nb-bg">
         <LoadingSpinner />

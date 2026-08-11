@@ -1,0 +1,15 @@
+{
+  "version": "0.1.0",
+  "notes": "WOS v0.1.0 — Initial release with Finance, Wealth, Net Worth, Vault, Todo, Notes, Habits, Subscriptions, Calendar, FIRE, Life Score & more.",
+  "pub_date": "2026-08-11T00:00:00Z",
+  "platforms": {
+    "darwin-x86_64": {
+      "signature": "",
+      "url": "https://github.com/sepatusendal/wos/releases/download/v0.1.0/WOS_0.1.0_x64.dmg"
+    },
+    "darwin-aarch64": {
+      "signature": "",
+      "url": "https://github.com/sepatusendal/wos/releases/download/v0.1.0/WOS_0.1.0_aarch64.dmg"
+    }
+  }
+}
