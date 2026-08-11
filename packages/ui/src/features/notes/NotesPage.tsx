@@ -149,7 +149,7 @@ export default function NotesPage() {
                 {note.linkedTodoId && todoMap.has(note.linkedTodoId) && (
                   <NeubruTag label={`🔗 ${todoMap.get(note.linkedTodoId)!.slice(0, 30)}`} color="purple" />
                 )}
-                <span className="text-nb-fg-muted font-medium">{formatDate(note.createdAt.slice(0, 10))}</span>
+                <span className="text-nb-fg-muted font-medium">{formatDate((note.createdAt ?? "").slice(0, 10))}</span>
               </div>
             </NeubruCard>
           ))}

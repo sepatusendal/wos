@@ -671,7 +671,7 @@ export default function FinancePage() {
           <h3 className="mb-3">🎉 Tabungan</h3>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
             {savingsGoals.map((g) => {
-              const pct = Math.min(Math.round((g.savedAmount / g.targetAmount) * 100), 100)
+              const pct = Math.min(g.targetAmount > 0 ? Math.round((g.savedAmount / g.targetAmount) * 100) : 0, 100)
               const done = g.savedAmount >= g.targetAmount
               return (
                 <NeubruCard key={g.id}>

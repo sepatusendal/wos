@@ -118,7 +118,7 @@ export default function DashboardPage() {
   const budgetProgress = useMemo(() => {
     return budgets.map((b) => {
       const spent = filteredTx.filter((t) => t.type === 'expense' && t.category === b.category).reduce((s, t) => s + t.amount, 0)
-      return { ...b, spent, pct: Math.min(Math.round((spent / b.limit) * 100), 100) }
+      return { ...b, spent, pct: Math.min(b.limit > 0 ? Math.round((spent / b.limit) * 100) : 0, 100) }
     })
   }, [budgets, filteredTx])
 
