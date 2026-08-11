@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { NeubruCard } from '../../components'
 import { toast } from 'sonner'
 import { useLevelStore } from '../../stores/levelStore'
+import { useAuthStore } from '../../stores/authStore'
 
 interface SkillNode {
   level: number
@@ -250,8 +251,8 @@ function DailyQuestsSection() {
 
   // Reset quests if it's a new day
   useEffect(() => {
-    if (dailyQuestDate !== today && typeof window !== 'undefined') {
-      const userId = 'default'
+    if (dailyQuestDate !== today) {
+      const userId = useAuthStore.getState().userId || 'default'
       generateDailyQuests(userId)
     }
   }, [dailyQuestDate, today, generateDailyQuests])

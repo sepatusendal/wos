@@ -3,6 +3,7 @@ import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, us
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 
 // ── Window State Persistence ──────────────────────────────
 // Fixes #4: macOS window doesn't remember position/size between sessions
@@ -42,9 +43,9 @@ async function restoreWindowState() {
   try {
     const win = getCurrentWindow()
     if (saved.x !== null && saved.y !== null) {
-      await win.setPosition({ x: saved.x, y: saved.y })
+      await win.setPosition(new PhysicalPosition(saved.x, saved.y))
     }
-    await win.setSize({ width: saved.width, height: saved.height })
+    await win.setSize(new PhysicalSize(saved.width, saved.height))
     if (saved.maximized) {
       await win.maximize()
     }
