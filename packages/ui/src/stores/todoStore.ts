@@ -45,7 +45,12 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       tags: JSON.stringify(t.tags), due_date: t.dueDate, notes: t.notes ?? '',
       parent_id: t.parentId, order: maxOrder, created_at: now, updated_at: now,
     })
-    await get().fetchAll(userId)
+    const newTodo: TodoItem = {
+      id, title: t.title, completed: false, priority: t.priority as TodoItem['priority'],
+      tags: t.tags, dueDate: t.dueDate ?? null, notes: t.notes ?? '',
+      parentId: t.parentId ?? null, order: maxOrder, createdAt: now, updatedAt: now,
+    }
+    set((s) => ({ todos: [newTodo, ...s.todos] }))
   },
 
   editTodo: async (t) => {
