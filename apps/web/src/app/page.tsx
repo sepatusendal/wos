@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   AppLayout, LoginPage, LoadingSpinner,
-  useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore,
+  useAuthStore, useFinanceStore, useWealthStore, useLiabilityStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore,
   useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore,
 } from '@wos/ui'
 import { Confetti } from '@wos/ui'
@@ -70,6 +70,7 @@ export default function Home() {
     setAdapter(adapter)
     useFinanceStore.getState().setAdapter(adapter)
     useWealthStore.getState().setAdapter(adapter)
+    useLiabilityStore.getState().setAdapter(adapter)
     useNetWorthStore.getState().setAdapter(adapter)
     useVaultStore.getState().setAdapter(adapter)
     useTodoStore.getState().setAdapter(adapter)

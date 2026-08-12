@@ -4,6 +4,7 @@ import { useNotesStore } from '../../stores/notesStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag, NeubruCheckbox } from '../../components'
 import { toast } from 'sonner'
+import { formatDate, todayStr } from '@wos/shared'
 import type { TodoItem, Priority } from '@wos/shared'
 
 const PRESET_TAGS = ['kerja', 'pribadi', 'penting', 'ide', 'bug', 'fitur']
@@ -11,6 +12,23 @@ const PRIORITY: { value: Priority; label: string }[] = [
   { value: 'low', label: '🟢 Low' }, { value: 'medium', label: '🟡 Medium' }, { value: 'high', label: '🔴 High' },
 ]
 const PRIO_COLORS: Record<Priority, 'red' | 'orange' | 'green'> = { high: 'red', medium: 'orange', low: 'green' }
+const PRIO_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 }
+
+// Dates are YYYY-MM-DD, so plain string comparison is enough.
+const isOverdue = (t: TodoItem, today: string) => !!t.dueDate && !t.completed && t.dueDate < today
+const isDueToday = (t: TodoItem, today: string) => !!t.dueDate && !t.completed && t.dueDate === today
+const daysLate = (dueDate: string, today: string) =>
+  Math.max(1, Math.round((new Date(today).getTime() - new Date(dueDate).getTime()) / 86400000))
+
+// Overdue first → due today → priority (high→low) → existing manual order.
+function sortTodos(a: TodoItem, b: TodoItem, today: string): number {
+  const bucket = (t: TodoItem) => (isOverdue(t, today) ? 0 : isDueToday(t, today) ? 1 : 2)
+  const d = bucket(a) - bucket(b)
+  if (d !== 0) return d
+  const p = PRIO_ORDER[a.priority] - PRIO_ORDER[b.priority]
+  if (p !== 0) return p
+  return (a.order ?? 0) - (b.order ?? 0)
+}
 
 export default function TodoPage() {
   const userId = useAuthStore((s) => s.userId)
@@ -46,28 +64,32 @@ export default function TodoPage() {
     return map
   }, [allNotes])
 
-  const filtered = useMemo(() => {
-    let r = todos
-    if (filter === 'active') r = r.filter((t) => !t.completed)
-    if (filter === 'completed') r = r.filter((t) => t.completed)
-    if (tagFilter) r = r.filter((t) => t.tags.includes(tagFilter))
-    if (search) {
-      const q = search.toLowerCase()
-      // A todo counts as a match if it matches directly OR one of its descendants does,
-      // so a matching subtask stays visible (with its parent kept as a container to nest under).
-      const byId = new Map(todos.map((t) => [t.id, t]))
-      const keep = new Set<string>()
-      r.filter((t) => t.title.toLowerCase().includes(q)).forEach((t) => {
-        keep.add(t.id)
-        let p = t.parentId ?? null
-        while (p && !keep.has(p)) {
-          keep.add(p)
-          p = byId.get(p)?.parentId ?? null
-        }
-      })
-      r = todos.filter((t) => keep.has(t.id))
-    }
-    return r
+  const today = todayStr()
+
+  // Every active filter (status + tag + search) is ANDed together, then the
+  // ancestor chain of each match is kept as a context-only container so a
+  // matching subtask stays visible nested under its parent — even when the
+  // parent itself doesn't match.
+  const { filtered, matchedIds } = useMemo(() => {
+    const q = search.toLowerCase()
+    const matches = todos.filter((t) => {
+      if (filter === 'active' && t.completed) return false
+      if (filter === 'completed' && !t.completed) return false
+      if (tagFilter && !t.tags.includes(tagFilter)) return false
+      if (q && !t.title.toLowerCase().includes(q)) return false
+      return true
+    })
+    const byId = new Map(todos.map((t) => [t.id, t]))
+    const keep = new Set<string>()
+    matches.forEach((t) => {
+      keep.add(t.id)
+      let p = t.parentId ?? null
+      while (p && !keep.has(p)) {
+        keep.add(p)
+        p = byId.get(p)?.parentId ?? null
+      }
+    })
+    return { filtered: todos.filter((t) => keep.has(t.id)), matchedIds: new Set(matches.map((t) => t.id)) }
   }, [todos, filter, tagFilter, search])
 
   // Build nested structure for display
@@ -78,13 +100,12 @@ export default function TodoPage() {
       if (!children.has(key)) children.set(key, [])
       children.get(key)!.push(t)
     })
-    // Sort by order within each group
-    children.forEach((list) => list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)))
+    children.forEach((list) => list.sort((a, b) => sortTodos(a, b, today)))
     return children.get(null) || []
-  }, [filtered])
+  }, [filtered, today])
 
   const getSubtasks = (parentId: string): TodoItem[] => {
-    return filtered.filter((t) => t.parentId === parentId)
+    return filtered.filter((t) => t.parentId === parentId).sort((a, b) => sortTodos(a, b, today))
   }
 
   const openAdd = (parent?: string | null) => { setEditId(null); setTitle(''); setPriority('medium'); setTags([]); setTagInput(''); setDueDate(''); setNote(''); setParentId(parent ?? null); setShowModal(true) }
@@ -162,9 +183,12 @@ export default function TodoPage() {
         ) : nestedTodos.map((t) => {
           const subs = getSubtasks(t.id)
           const subsDone = subs.filter((s) => s.completed).length
+          const late = isOverdue(t, today)
+          // Kept only as a container for a matching descendant — muted for context.
+          const contextOnly = !matchedIds.has(t.id)
           return (
             <div key={t.id}>
-              <div className="nb-list-item flex-wrap" style={{ opacity: t.completed ? 0.6 : 1 }}>
+              <div className="nb-list-item flex-wrap" style={{ opacity: t.completed ? 0.6 : contextOnly ? 0.5 : 1, ...(late ? { borderLeft: '6px solid var(--color-nb-red)' } : {}) }}>
                 <div className="flex items-center gap-3 flex-1 min-w-[200px]">
                   <NeubruCheckbox checked={t.completed} onChange={() => toggleComplete(t.id)} />
                   <div>
@@ -172,7 +196,8 @@ export default function TodoPage() {
                     <div className="flex gap-1.5 items-center flex-wrap mt-1">
                       <NeubruTag label={PRIORITY.find((p) => p.value === t.priority)?.label || t.priority} color={PRIO_COLORS[t.priority]} />
                       {t.tags.map((tag) => <NeubruTag key={tag} label={`#${tag}`} />)}
-                      {t.dueDate && <span className="text-xs text-nb-fg-muted font-semibold">📅 {t.dueDate}</span>}
+                      {t.dueDate && <span className={`text-xs font-semibold ${late ? 'text-nb-red' : 'text-nb-fg-muted'}`}>📅 {formatDate(t.dueDate)}</span>}
+                      {late && <span className="text-xs font-extrabold text-nb-red">⚠️ Telat {daysLate(t.dueDate!, today)} hari</span>}
                       {subs.length > 0 && (
                         <span className="text-xs font-bold text-nb-fg-muted">
                           📋 {subsDone}/{subs.length}
@@ -201,8 +226,11 @@ export default function TodoPage() {
               {/* Subtasks */}
               {subs.length > 0 && (
                 <div className="ml-8 mt-1 flex flex-col gap-1.5 border-l-3 border-nb-border pl-4">
-                  {subs.map((sub) => (
-                    <div key={sub.id} className="nb-list-item flex-wrap" style={{ opacity: sub.completed ? 0.6 : 1 }}>
+                  {subs.map((sub) => {
+                    const subLate = isOverdue(sub, today)
+                    const subContextOnly = !matchedIds.has(sub.id)
+                    return (
+                    <div key={sub.id} className="nb-list-item flex-wrap" style={{ opacity: sub.completed ? 0.6 : subContextOnly ? 0.5 : 1, ...(subLate ? { borderLeft: '6px solid var(--color-nb-red)' } : {}) }}>
                       <div className="flex items-center gap-3 flex-1 min-w-[200px]">
                         <NeubruCheckbox checked={sub.completed} onChange={() => toggleComplete(sub.id)} />
                         <div>
@@ -210,7 +238,8 @@ export default function TodoPage() {
                           <div className="flex gap-1.5 items-center flex-wrap mt-1">
                             <NeubruTag label={PRIORITY.find((p) => p.value === sub.priority)?.label || sub.priority} color={PRIO_COLORS[sub.priority]} />
                             {sub.tags.map((tag) => <NeubruTag key={tag} label={`#${tag}`} />)}
-                            {sub.dueDate && <span className="text-xs text-nb-fg-muted font-semibold">📅 {sub.dueDate}</span>}
+                            {sub.dueDate && <span className={`text-xs font-semibold ${subLate ? 'text-nb-red' : 'text-nb-fg-muted'}`}>📅 {formatDate(sub.dueDate)}</span>}
+                            {subLate && <span className="text-xs font-extrabold text-nb-red">⚠️ Telat {daysLate(sub.dueDate!, today)} hari</span>}
                             {linkedNotesByTodo.has(sub.id) && (
                               <span className="relative group cursor-help" title={linkedNotesByTodo.get(sub.id)!.map((n) => n.title).join('\n')}>
                                 <span className="font-bold text-nb-purple">📝</span>
@@ -227,7 +256,8 @@ export default function TodoPage() {
                         <NeubruBtn size="sm" color="red" className="nb-btn-icon" onClick={() => deleteTodo(sub.id)}>✕</NeubruBtn>
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>

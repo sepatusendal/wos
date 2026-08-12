@@ -23,6 +23,50 @@ function daysAgo(n: number): string {
   return dateStr(d)
 }
 
+// ── Life Score daily snapshots (localStorage, JSON-per-day like checkinStore) ──
+
+type ScoreSnapshot = Record<string, number>
+
+function snapshotKey(userId: string, date: string): string {
+  return `wos_lifescore_${userId}_${date}`
+}
+
+function readSnapshot(userId: string, date: string): ScoreSnapshot | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(snapshotKey(userId, date))
+    if (!raw) return null
+    return JSON.parse(raw) as ScoreSnapshot
+  } catch {
+    return null
+  }
+}
+
+function writeSnapshot(userId: string, snap: ScoreSnapshot): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(snapshotKey(userId, dateStr(new Date())), JSON.stringify(snap))
+    // Clean up snapshots older than 90 days
+    const cutoff = daysAgo(90)
+    const prefix = `wos_lifescore_${userId}_`
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith(prefix) && key.slice(prefix.length) < cutoff) {
+        localStorage.removeItem(key)
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+/** Nearest existing snapshot roughly a week back (7–21 days ago), or null. */
+function findBaselineSnapshot(userId: string): ScoreSnapshot | null {
+  for (let i = 7; i <= 21; i++) {
+    const snap = readSnapshot(userId, daysAgo(i))
+    if (snap) return snap
+  }
+  return null
+}
+
 // Load all check-in data from localStorage for last 90 days
 function loadCheckinHistory(): { checkedDates: Set<string>; moodSum: number; moodCount: number; energySum: number; energyCount: number } {
   const checkedDates = new Set<string>()
@@ -251,26 +295,33 @@ export default function LifeScorePage() {
   // Manual input slider — stored in state
 
   // ── Dimensions ─────────────────────────────────────────────
-  const dimensions: { name: string; score: number; fullMark: number; icon: string; color: string }[] = useMemo(() => [
-    { name: 'Wealth', score: wealthScore, fullMark: 100, icon: '💰', color: 'var(--color-nb-blue)' },
-    { name: 'Vitality', score: vitalityScore, fullMark: 100, icon: '💪', color: 'var(--color-nb-green)' },
-    { name: 'Mind', score: mindScore, fullMark: 100, icon: '🧠', color: 'var(--color-nb-orange)' },
-    { name: 'Productivity', score: productivityScore, fullMark: 100, icon: '⚡', color: 'var(--color-nb-pink)' },
-    { name: 'Social', score: socialScore, fullMark: 100, icon: '🤝', color: 'var(--color-nb-purple)' },
+  // `measured` = derived from real data. Social is a self-rating, so it's shown
+  // but deliberately excluded from the overall score (otherwise the score is
+  // gameable by just dragging a slider).
+  const dimensions: { name: string; score: number; fullMark: number; icon: string; color: string; measured: boolean }[] = useMemo(() => [
+    { name: 'Wealth', score: wealthScore, fullMark: 100, icon: '💰', color: 'var(--color-nb-blue)', measured: true },
+    { name: 'Vitality', score: vitalityScore, fullMark: 100, icon: '💪', color: 'var(--color-nb-green)', measured: true },
+    { name: 'Mind', score: mindScore, fullMark: 100, icon: '🧠', color: 'var(--color-nb-orange)', measured: true },
+    { name: 'Productivity', score: productivityScore, fullMark: 100, icon: '⚡', color: 'var(--color-nb-pink)', measured: true },
+    { name: 'Social', score: socialScore, fullMark: 100, icon: '🤝', color: 'var(--color-nb-purple)', measured: false },
   ], [wealthScore, vitalityScore, mindScore, productivityScore, socialScore])
 
+  const measuredDimensions = useMemo(() => dimensions.filter((d) => d.measured), [dimensions])
+
   const lifeScore = useMemo(() => {
-    return Math.round(dimensions.reduce((s, d) => s + d.score, 0) / dimensions.length)
-  }, [dimensions])
+    return Math.round(measuredDimensions.reduce((s, d) => s + d.score, 0) / measuredDimensions.length)
+  }, [measuredDimensions])
 
   const radarData = useMemo(() => {
     // Recharts RadarChart expects data in format: [{ subject, A, fullMark }, ...]
-    return dimensions.map((d) => ({
+    // Only the 4 measured dimensions are plotted — Social is self-rated and is
+    // shown separately (its own card + badge), never mixed into the shape.
+    return measuredDimensions.map((d) => ({
       subject: d.name,
       score: d.score,
       fullMark: d.fullMark,
     }))
-  }, [dimensions])
+  }, [measuredDimensions])
 
   // ── Insights ───────────────────────────────────────────────
   const insights = useMemo(() => {
@@ -330,28 +381,51 @@ export default function LifeScorePage() {
   const scoreLabel = lifeScore >= 80 ? 'Excellent!' : lifeScore >= 65 ? 'Good' : lifeScore >= 45 ? 'Fair' : 'Needs Love'
   const scoreColor = lifeScore >= 65 ? 'var(--color-nb-green)' : lifeScore >= 45 ? 'var(--color-nb-orange)' : 'var(--color-nb-red)'
 
-  // Trend arrows
-  const trendIcon = (trend: 'up' | 'down' | 'stable') => {
+  // Trend arrows — 'none' means "no historical snapshot yet", never a guess
+  const trendIcon = (trend: 'up' | 'down' | 'stable' | 'none') => {
     if (trend === 'up') return <span className="text-nb-green font-bold">▲</span>
     if (trend === 'down') return <span className="text-nb-red font-bold">▼</span>
-    return <span className="text-nb-fg-muted font-bold">—</span>
+    if (trend === 'stable') return <span className="text-nb-fg-muted font-bold">=</span>
+    return <span className="text-nb-fg-muted font-bold" title="Belum ada data historis">—</span>
   }
 
-  // ── Determine trends (simple: compare current score to a baseline) ──
-  const getTrend = (score: number, baseline: number): 'up' | 'down' | 'stable' => {
+  // ── Real trends: today's score vs the snapshot from ~a week ago ──
+  const getTrend = (score: number, baseline: number | undefined): 'up' | 'down' | 'stable' | 'none' => {
+    if (baseline === undefined) return 'none'
     if (score > baseline + 5) return 'up'
     if (score < baseline - 5) return 'down'
     return 'stable'
   }
 
-  // For simplicity, trend is based on 50 as baseline (no historical data yet)
+  const [baseline, setBaseline] = useState<ScoreSnapshot | null>(null)
+
+  // Read the ~7-day-old snapshot once (before today's write, which never
+  // touches older keys anyway)
+  useEffect(() => {
+    if (!userId) return
+    setBaseline(findBaselineSnapshot(userId))
+  }, [userId])
+
+  // Persist today's snapshot so future visits have something real to compare to
+  useEffect(() => {
+    if (!userId || !loaded) return
+    writeSnapshot(userId, {
+      total: lifeScore,
+      Wealth: wealthScore,
+      Vitality: vitalityScore,
+      Mind: mindScore,
+      Productivity: productivityScore,
+      Social: socialScore,
+    })
+  }, [userId, loaded, lifeScore, wealthScore, vitalityScore, mindScore, productivityScore, socialScore])
+
   const dimensionsWithTrend = useMemo(() => {
     return dimensions.map((d) => ({
       ...d,
-      trend: getTrend(d.score, 50),
+      trend: getTrend(d.score, baseline?.[d.name]),
       insight: getDimensionInsight(d.name, d.score),
     }))
-  }, [dimensions])
+  }, [dimensions, baseline])
 
   if (!loaded) {
     return (
@@ -384,6 +458,9 @@ export default function LifeScorePage() {
               </div>
               <div className="text-sm font-bold uppercase tracking-[0.08em] text-nb-fg-muted mt-1">
                 / 100 · {scoreLabel}
+              </div>
+              <div className="text-[0.65rem] font-medium text-nb-fg-muted mt-1.5 text-center leading-relaxed">
+                Rata-rata 4 dimensi terukur (Social tidak dihitung)
               </div>
             </div>
             <div className="flex-1 min-w-[300px]">
@@ -488,6 +565,11 @@ export default function LifeScorePage() {
             <div className="text-[0.65rem] font-bold uppercase tracking-[0.1em] text-nb-fg-muted mt-0.5">
               {dim.name} / 100
             </div>
+            {!dim.measured && (
+              <div className="mt-1.5 inline-block text-[0.6rem] font-bold uppercase tracking-wide border-2 border-nb-border bg-nb-purple/20 px-1.5 py-0.5">
+                Self-rated · tidak dihitung ke skor total
+              </div>
+            )}
             {/* Mini bar */}
             <div className="mt-3 w-full h-2 bg-nb-bg-alt border border-nb-border rounded-sm overflow-hidden">
               <div
@@ -533,7 +615,7 @@ export default function LifeScorePage() {
             </div>
           </div>
           <div className="mt-3 text-xs text-nb-fg-muted font-medium">
-            Ini manual dulu ya. Ke depan: sync dengan shared goals, group challenges, dan social features WOS.
+            Self-rated, tidak dihitung ke skor total — biar Life Score tetap murni dari data. Ke depan: sync dengan shared goals, group challenges, dan social features WOS.
           </div>
         </NeubruCard>
       </div>
@@ -562,8 +644,10 @@ export default function LifeScorePage() {
         <strong>Vitality</strong> = habit completion rate + streak + daily check-in consistency.{' '}
         <strong>Mind</strong> = notes written + journal consistency + learning tracker.{' '}
         <strong>Productivity</strong> = todo completion rate + tasks done per week.{' '}
-        <strong>Social</strong> = manual slider (future: shared goals, group features).{' '}
-        Life Score is the average of all five dimensions.
+        <strong>Social</strong> = self-rated slider, tidak dihitung ke skor total (future: shared goals, group features).{' '}
+        Life Score is the average of the four measured dimensions only.{' '}
+        Panah tren membandingkan skor hari ini dengan snapshot harian ~7 hari lalu — kalau belum ada
+        riwayatnya, yang muncul "—", bukan tren palsu.
       </div>
     </div>
   )

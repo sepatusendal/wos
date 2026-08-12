@@ -1,8 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { NeubruBtn, NeubruCard } from '../../components'
 import { LatteFactor } from './LatteFactor'
 import { LoanCalculator } from './LoanCalculator'
+import { useAuthStore } from '../../stores/authStore'
 import { useFinanceStore } from '../../stores/financeStore'
+import { useWealthStore } from '../../stores/wealthStore'
+import { useLiabilityStore } from '../../stores/liabilityStore'
 import { useNetWorthStore } from '../../stores/netWorthStore'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
@@ -11,6 +14,45 @@ type TabId = 'latte' | 'loan' | 'sankey' | 'simulator'
 
 export default function ToolsPage() {
   const [tab, setTab] = useState<TabId>('sankey')
+
+  // This page never fetched its own data — opening it first (or after a
+  // refresh) left Sankey & the simulator empty. Lazy-fetch whatever is missing.
+  const transactions = useFinanceStore((s) => s.transactions)
+  const assets = useWealthStore((s) => s.assets)
+  const liabilities = useLiabilityStore((s) => s.liabilities)
+  const netWorthEntries = useNetWorthStore((s) => s.entries)
+  const fetchFinance = useFinanceStore((s) => s.fetchAll)
+  const fetchWealth = useWealthStore((s) => s.fetchAll)
+  const fetchLiabilities = useLiabilityStore((s) => s.fetchAll)
+  const fetchNetWorth = useNetWorthStore((s) => s.fetchAll)
+  const didFetch = useRef(false)
+
+  useEffect(() => {
+    const userId = useAuthStore.getState().userId
+    if (!userId) return
+    if (didFetch.current) return
+
+    let attempted = false
+    if (transactions.length === 0) {
+      fetchFinance(userId).catch(() => {})
+      attempted = true
+    }
+    if (assets.length === 0) {
+      fetchWealth(userId).catch(() => {})
+      attempted = true
+    }
+    if (liabilities.length === 0) {
+      fetchLiabilities(userId).catch(() => {})
+      attempted = true
+    }
+    if (netWorthEntries.length === 0) {
+      fetchNetWorth(userId).catch(() => {})
+      attempted = true
+    }
+    if (attempted) {
+      didFetch.current = true
+    }
+  }, [transactions.length, assets.length, liabilities.length, netWorthEntries.length, fetchFinance, fetchWealth, fetchLiabilities, fetchNetWorth])
 
   const tabs: { id: TabId; label: string }[] = [
     { id: 'sankey', label: '🌊 Sankey' },
@@ -340,27 +382,44 @@ function simulate(
 function SimulatorSection() {
   const formatCurrency = useFormatCurrency()
   const transactions = useFinanceStore((s) => s.transactions)
+  const assets = useWealthStore((s) => s.assets)
+  const liabilities = useLiabilityStore((s) => s.liabilities)
   const netWorthEntries = useNetWorthStore((s) => s.entries)
 
-  const { currentSavings, monthlySavings } = useMemo(() => {
+  const { currentSavings, monthlySavings, monthsCounted, deficitMonths } = useMemo(() => {
     const now = new Date()
     const last6Months: string[] = []
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
       last6Months.push(monthKey(d))
     }
-    const totalNW = netWorthEntries[0]?.netWorth || 0
+    // Live net worth (assets − liabilities), same as the Wealth page; falls back
+    // to the latest auto-snapshot if holdings haven't been entered yet.
+    const assetTotal = assets.reduce((s, a) => s + a.quantity * a.unitPrice, 0)
+    const liabilityTotal = liabilities.reduce((s, l) => s + l.amount, 0)
+    const liveNW = assets.length > 0 || liabilities.length > 0 ? Math.round(assetTotal - liabilityTotal) : 0
+    const totalNW = liveNW || netWorthEntries[0]?.netWorth || 0
+
+    // Average over EVERY month that has data — surplus and deficit alike.
+    // Averaging only surplus months made every projection overoptimistic.
     const savingsByMonth: number[] = []
     for (const mk of last6Months) {
       const mTx = transactions.filter((t) => t.date.startsWith(mk))
+      if (mTx.length === 0) continue
       const inc = mTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
       const exp = mTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
       savingsByMonth.push(inc - exp)
     }
-    const pos = savingsByMonth.filter((v) => v > 0)
-    const avg = pos.length > 0 ? Math.round(pos.reduce((s, v) => s + v, 0) / pos.length) : 0
-    return { currentSavings: totalNW || avg * 6, monthlySavings: avg }
-  }, [transactions, netWorthEntries])
+    const avg = savingsByMonth.length > 0
+      ? Math.round(savingsByMonth.reduce((s, v) => s + v, 0) / savingsByMonth.length)
+      : 0
+    return {
+      currentSavings: totalNW || Math.max(0, avg) * 6,
+      monthlySavings: avg,
+      monthsCounted: savingsByMonth.length,
+      deficitMonths: savingsByMonth.filter((v) => v < 0).length,
+    }
+  }, [transactions, assets, liabilities, netWorthEntries])
 
   const [customSavings, setCustomSavings] = useState('')
   const [customMonthly, setCustomMonthly] = useState('')
@@ -433,6 +492,11 @@ function SimulatorSection() {
         <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
           {inputRow('Tabungan Saat Ini', customSavings, setCustomSavings, currentSavings)}
           {inputRow('Tabungan Bulanan', customMonthly, setCustomMonthly, monthlySavings)}
+          {!customMonthly && monthsCounted > 0 && (
+            <p className="text-[11px] text-nb-fg-muted -mt-2 col-span-full">
+              Rata-rata dari {monthsCounted} bulan terakhir yang ada datanya{deficitMonths > 0 ? ` (termasuk ${deficitMonths} bulan defisit)` : ''} — bukan cuma bulan surplus.
+            </p>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Expected Return %</label>

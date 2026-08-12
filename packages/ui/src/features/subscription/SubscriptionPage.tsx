@@ -45,6 +45,17 @@ const FREQUENCY_LABELS: Record<string, string> = {
 
 const ICON_OPTIONS = ['📺', '🎬', '🎵', '🎧', '☁️', '🖥️', '🎮', '💪', '📰', '📦', '🎨', '📚', '🔒', '💬', '📱', '🛒']
 
+/** Whole days a billing date is past due (0 if not overdue). Date-only math, no timezone drift. */
+function daysOverdue(nextBilling: string, today: string): number {
+  if (nextBilling >= today) return 0
+  const n = nextBilling.split('-')
+  const t = today.split('-')
+  const diff =
+    Date.UTC(Number(t[0]), Number(t[1]) - 1, Number(t[2])) -
+    Date.UTC(Number(n[0]), Number(n[1]) - 1, Number(n[2]))
+  return Math.max(0, Math.round(diff / 86_400_000))
+}
+
 export default function SubscriptionPage() {
   const userId = useAuthStore((s) => s.userId)
   const formatCurrency = useFormatCurrency()
@@ -68,13 +79,19 @@ export default function SubscriptionPage() {
   const activeSubs = useMemo(() => subscriptions.filter((s) => s.active), [subscriptions])
   const activeCount = activeSubs.length
 
+  const today = useMemo(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  }, [])
+
+  // Overdue bills sort first — a past-due subscription must be surfaced, not
+  // silently dropped from the "upcoming" view like it used to be.
   const soonestBilling = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    const upcoming = activeSubs
-      .filter((s) => s.nextBilling >= today)
-      .sort((a, b) => a.nextBilling.localeCompare(b.nextBilling))
-    return upcoming.length > 0 ? upcoming[0] : null
+    const sorted = [...activeSubs].sort((a, b) => a.nextBilling.localeCompare(b.nextBilling))
+    return sorted.length > 0 ? sorted[0] : null
   }, [activeSubs])
+
+  const soonestOverdueDays = soonestBilling ? daysOverdue(soonestBilling.nextBilling, today) : 0
 
   const filteredSubs = useMemo(() => {
     if (activeFilter === 'all') return subscriptions
@@ -165,6 +182,9 @@ export default function SubscriptionPage() {
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Total Bulanan</div>
           <div className="text-nb-green font-mono text-xl font-extrabold">{formatCurrency(monthlyTotal)}</div>
           <div className="text-xs text-nb-fg-muted mt-1 font-medium">/ bulan</div>
+          <div className="text-[0.65rem] text-nb-fg-muted mt-1.5 leading-snug">
+            Estimasi dari data langganan — transaksi aktual mungkin berbeda kalau harga sudah berubah.
+          </div>
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Subscription Aktif</div>
@@ -173,9 +193,17 @@ export default function SubscriptionPage() {
         </NeubruCard>
         {soonestBilling && (
           <NeubruCard>
-            <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Tagihan Terdekat</div>
+            <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">
+              {soonestOverdueDays > 0 ? 'Tagihan Terlambat' : 'Tagihan Terdekat'}
+            </div>
             <div className="font-mono text-lg font-extrabold">{soonestBilling.name}</div>
-            <div className="text-xs text-nb-fg-muted mt-1 font-medium">{formatShortDate(soonestBilling.nextBilling)} — {formatCurrency(soonestBilling.amount)}</div>
+            {soonestOverdueDays > 0 ? (
+              <div className="text-xs text-nb-red mt-1 font-bold">
+                ⚠️ Terlambat {soonestOverdueDays} hari — {formatCurrency(soonestBilling.amount)}
+              </div>
+            ) : (
+              <div className="text-xs text-nb-fg-muted mt-1 font-medium">{formatShortDate(soonestBilling.nextBilling)} — {formatCurrency(soonestBilling.amount)}</div>
+            )}
           </NeubruCard>
         )}
       </div>
@@ -234,9 +262,16 @@ export default function SubscriptionPage() {
                 <span className="font-mono font-extrabold text-lg">{formatCurrency(s.amount)}</span>
               </div>
 
-              <div className="text-xs text-nb-fg-muted mb-3">
-                Tagihan berikutnya: <span className="font-bold">{formatShortDate(s.nextBilling)}</span>
-              </div>
+              {s.active && daysOverdue(s.nextBilling, today) > 0 ? (
+                <div className="text-xs mb-3">
+                  <span className="nb-tag bg-nb-red text-white">⚠️ Terlambat {daysOverdue(s.nextBilling, today)} hari</span>
+                  <span className="text-nb-fg-muted ml-2">jatuh tempo {formatShortDate(s.nextBilling)}</span>
+                </div>
+              ) : (
+                <div className="text-xs text-nb-fg-muted mb-3">
+                  Tagihan berikutnya: <span className="font-bold">{formatShortDate(s.nextBilling)}</span>
+                </div>
+              )}
 
               <div className="flex items-center justify-between pt-2 border-t-2 border-nb-border">
                 <span className="text-xs font-bold uppercase tracking-wider text-nb-fg-muted">

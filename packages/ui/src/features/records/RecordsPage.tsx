@@ -12,7 +12,14 @@ interface RecordCard {
   label: string
   value: string
   date?: string
+  /** Not enough data yet — shown grayed out as progress, never hidden. */
+  locked?: boolean
 }
+
+// Minimum data before a record is meaningful
+const MIN_MONTHS = 2       // monthly records need 2 complete past months
+const MIN_STREAK_DAYS = 3  // streak records need 3 days of data
+const MIN_NW_FLOOR = 100_000 // growth from a near-zero base isn't a real record
 
 const MONTH_LABELS: Record<string, string> = {
   '01': 'Jan', '02': 'Feb', '03': 'Mar', '04': 'Apr',
@@ -51,60 +58,72 @@ export default function RecordsPage() {
   const records = useMemo((): RecordCard[] => {
     const results: RecordCard[] = []
 
-    // ── 1. Pengeluaran Terendah (monthly) ──
-    if (transactions.length > 0) {
-      const monthlyExpenses: Record<string, number> = {}
-      transactions
-        .filter((t) => t.type === 'expense')
-        .forEach((t) => {
-          const key = t.date.slice(0, 7)
-          monthlyExpenses[key] = (monthlyExpenses[key] || 0) + t.amount
-        })
+    const lockedCard = (icon: string, label: string, need: string, have: number, total: number): RecordCard => ({
+      icon: '🔒',
+      label: `${icon} ${label}`,
+      value: `Butuh ${need}`,
+      date: `${have}/${total} terkumpul`,
+      locked: true,
+    })
 
-      const monthKeys = Object.keys(monthlyExpenses)
-      if (monthKeys.length > 0) {
-        let lowest = monthKeys[0]!
-        for (const k of monthKeys) {
-          if ((monthlyExpenses[k] || 0) < (monthlyExpenses[lowest] || 0)) lowest = k
+    // ── Monthly aggregation — the current month is still in progress, so it
+    // never competes (a 3-day-old month would trivially win "lowest expense").
+    const currentMonth = todayStr().slice(0, 7)
+    const monthly: Record<string, { income: number; expense: number }> = {}
+    for (const t of transactions) {
+      const key = t.date.slice(0, 7)
+      if (key >= currentMonth) continue
+      if (!monthly[key]) monthly[key] = { income: 0, expense: 0 }
+      if (t.type === 'income') monthly[key]!.income += t.amount
+      else monthly[key]!.expense += t.amount
+    }
+    const completeMonths = Object.keys(monthly)
+    const hasEnoughMonths = completeMonths.length >= MIN_MONTHS
+
+    // ── 1. Pengeluaran Terendah (monthly) ──
+    if (!hasEnoughMonths) {
+      results.push(lockedCard('📉', 'Pengeluaran Terendah', `${MIN_MONTHS} bulan data`, completeMonths.length, MIN_MONTHS))
+    } else {
+      const expenseMonths = completeMonths.filter((k) => (monthly[k]?.expense ?? 0) > 0)
+      if (expenseMonths.length >= MIN_MONTHS) {
+        let lowest = expenseMonths[0]!
+        for (const k of expenseMonths) {
+          if ((monthly[k]?.expense ?? 0) < (monthly[lowest]?.expense ?? 0)) lowest = k
         }
         results.push({
           icon: '📉',
           label: 'Pengeluaran Terendah',
-          value: formatCurrency(monthlyExpenses[lowest] || 0),
+          value: formatCurrency(monthly[lowest]?.expense ?? 0),
           date: formatMonthLabel(lowest),
         })
+      } else {
+        results.push(lockedCard('📉', 'Pengeluaran Terendah', `${MIN_MONTHS} bulan data pengeluaran`, expenseMonths.length, MIN_MONTHS))
       }
     }
 
     // ── 2. Income Tertinggi (monthly) ──
-    if (transactions.length > 0) {
-      const monthlyIncome: Record<string, number> = {}
-      transactions
-        .filter((t) => t.type === 'income')
-        .forEach((t) => {
-          const key = t.date.slice(0, 7)
-          monthlyIncome[key] = (monthlyIncome[key] || 0) + t.amount
+    if (!hasEnoughMonths) {
+      results.push(lockedCard('💰', 'Income Tertinggi', `${MIN_MONTHS} bulan data`, completeMonths.length, MIN_MONTHS))
+    } else {
+      const incomeMonths = completeMonths.filter((k) => (monthly[k]?.income ?? 0) > 0)
+      if (incomeMonths.length >= MIN_MONTHS) {
+        let highest = incomeMonths[0]!
+        for (const k of incomeMonths) {
+          if ((monthly[k]?.income ?? 0) > (monthly[highest]?.income ?? 0)) highest = k
+        }
+        results.push({
+          icon: '💰',
+          label: 'Income Tertinggi',
+          value: formatCurrency(monthly[highest]?.income ?? 0),
+          date: formatMonthLabel(highest),
         })
-
-      const monthKeys = Object.keys(monthlyIncome)
-      if (monthKeys.length > 0) {
-        let highest = monthKeys[0]!
-        for (const k of monthKeys) {
-          if ((monthlyIncome[k] || 0) > (monthlyIncome[highest] || 0)) highest = k
-        }
-        if ((monthlyIncome[highest] || 0) > 0) {
-          results.push({
-            icon: '💰',
-            label: 'Income Tertinggi',
-            value: formatCurrency(monthlyIncome[highest] || 0),
-            date: formatMonthLabel(highest),
-          })
-        }
+      } else {
+        results.push(lockedCard('💰', 'Income Tertinggi', `${MIN_MONTHS} bulan data income`, incomeMonths.length, MIN_MONTHS))
       }
     }
 
     // ── 3. Streak Tracking Harian Terpanjang ──
-    if (transactions.length > 0) {
+    {
       const dates = new Set(transactions.map((t) => t.date))
       const sorted = [...dates].sort()
       let longestStreak = 0
@@ -128,7 +147,9 @@ export default function RecordsPage() {
           streakEnd = sorted[i]!
         }
       }
-      if (longestStreak > 0) {
+      if (sorted.length < MIN_STREAK_DAYS) {
+        results.push(lockedCard('🔥', 'Streak Tracking Harian Terpanjang', `${MIN_STREAK_DAYS} hari data`, sorted.length, MIN_STREAK_DAYS))
+      } else if (longestStreak > 0) {
         results.push({
           icon: '🔥',
           label: 'Streak Tracking Harian Terpanjang',
@@ -139,7 +160,9 @@ export default function RecordsPage() {
     }
 
     // ── 4. Net Worth Growth Tercepat (monthly) ──
-    if (entries.length >= 2) {
+    if (entries.length < 2) {
+      results.push(lockedCard('🚀', 'Net Worth Growth Tercepat', '2 entry net worth', entries.length, 2))
+    } else {
       const sorted = [...entries].sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
       let bestGrowth = -Infinity
       let bestGrowthDate = ''
@@ -149,7 +172,8 @@ export default function RecordsPage() {
         const curr = sorted[i]!
         const prevNw = prev.netWorth
         const currNw = curr.netWorth
-        if (prevNw !== 0) {
+        // Growth from a tiny/near-zero base produces meaningless "+900%" records
+        if (Math.abs(prevNw) >= MIN_NW_FLOOR) {
           const pct = ((currNw - prevNw) / Math.abs(prevNw)) * 100
           if (pct > bestGrowth) {
             bestGrowth = pct
@@ -165,6 +189,14 @@ export default function RecordsPage() {
           label: 'Net Worth Growth Tercepat',
           value: `${prefix}${bestGrowthPct}%`,
           date: formatMonthLabel(bestGrowthDate.slice(0, 7)),
+        })
+      } else {
+        results.push({
+          icon: '🔒',
+          label: '🚀 Net Worth Growth Tercepat',
+          value: `Butuh net worth awal ≥ ${formatCurrency(MIN_NW_FLOOR)}`,
+          date: 'growth dari nilai nyaris nol belum dihitung',
+          locked: true,
         })
       }
     }
@@ -245,7 +277,11 @@ export default function RecordsPage() {
         }
       }
 
-      if (bestHabitStreak > 0 && bestHabitName) {
+      // Streak records need a few days of habit data before they mean anything
+      const habitLogDays = new Set(logs.filter((l) => l.done).map((l) => l.date)).size
+      if (habitLogDays < MIN_STREAK_DAYS) {
+        results.push(lockedCard('✅', 'Habit Paling Konsisten', `${MIN_STREAK_DAYS} hari data habit`, habitLogDays, MIN_STREAK_DAYS))
+      } else if (bestHabitStreak > 0 && bestHabitName) {
         results.push({
           icon: bestHabitEmoji || '✅',
           label: 'Habit Paling Konsisten',
@@ -254,35 +290,31 @@ export default function RecordsPage() {
       }
     }
 
-    // ── 6. Bulan Paling Hemat ──
-    if (transactions.length > 0) {
-      const monthlySavingsRate: Record<string, { income: number; expense: number }> = {}
-      transactions.forEach((t) => {
-        const key = t.date.slice(0, 7)
-        if (!monthlySavingsRate[key]) monthlySavingsRate[key] = { income: 0, expense: 0 }
-        if (t.type === 'income') monthlySavingsRate[key]!.income += t.amount
-        else monthlySavingsRate[key]!.expense += t.amount
-      })
-
-      let bestMonth = ''
-      let bestRate = -Infinity
-      for (const [key, vals] of Object.entries(monthlySavingsRate)) {
-        if (vals.income > 0) {
+    // ── 6. Bulan Paling Hemat (bulan berjalan tidak ikut) ──
+    {
+      const incomeMonths = completeMonths.filter((k) => (monthly[k]?.income ?? 0) > 0)
+      if (incomeMonths.length < MIN_MONTHS) {
+        results.push(lockedCard('🤑', 'Bulan Paling Hemat', `${MIN_MONTHS} bulan data income`, incomeMonths.length, MIN_MONTHS))
+      } else {
+        let bestMonth = ''
+        let bestRate = -Infinity
+        for (const key of incomeMonths) {
+          const vals = monthly[key]!
           const rate = Math.round(((vals.income - vals.expense) / vals.income) * 100)
           if (rate > bestRate) {
             bestRate = rate
             bestMonth = key
           }
         }
-      }
-      if (bestMonth) {
-        const prefix = bestRate >= 0 ? '+' : ''
-        results.push({
-          icon: '🤑',
-          label: 'Bulan Paling Hemat',
-          value: `${prefix}${bestRate}% savings rate`,
-          date: formatMonthLabel(bestMonth),
-        })
+        if (bestMonth) {
+          const prefix = bestRate >= 0 ? '+' : ''
+          results.push({
+            icon: '🤑',
+            label: 'Bulan Paling Hemat',
+            value: `${prefix}${bestRate}% savings rate`,
+            date: formatMonthLabel(bestMonth),
+          })
+        }
       }
     }
 
@@ -400,14 +432,14 @@ export default function RecordsPage() {
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
           {records.map((r, i) => (
-            <NeubruCard key={i}>
+            <NeubruCard key={i} className={r.locked ? 'opacity-60' : undefined}>
               <div className="flex items-start gap-3">
                 <span className="text-3xl shrink-0 leading-none">{r.icon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">
                     {r.label}
                   </div>
-                  <div className="font-mono text-lg font-extrabold text-nb-fg break-words">
+                  <div className={`font-mono text-lg font-extrabold break-words ${r.locked ? 'text-nb-fg-muted' : 'text-nb-fg'}`}>
                     {r.value}
                   </div>
                   {r.date && (

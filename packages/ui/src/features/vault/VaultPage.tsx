@@ -15,6 +15,24 @@ const CAT_COLORS: Record<string, 'blue' | 'green' | 'pink' | 'purple' | 'orange'
   email: 'blue', banking: 'green', social: 'pink', work: 'purple', entertainment: 'orange', shopping: 'yellow', other: 'yellow',
 }
 
+// Clipboard is wiped this long after a copy — standard password-manager behavior.
+const CLIPBOARD_CLEAR_MS = 30000
+const PW_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+[]{}'
+
+function generatePassword(): string {
+  // crypto.getRandomValues, not Math.random — this is a password manager.
+  const lengths = new Uint32Array(1)
+  crypto.getRandomValues(lengths)
+  const len = 16 + ((lengths[0] ?? 0) % 5) // 16–20
+  const bytes = new Uint32Array(len)
+  crypto.getRandomValues(bytes)
+  let out = ''
+  for (let i = 0; i < len; i++) out += PW_CHARS[(bytes[i] ?? 0) % PW_CHARS.length]
+  // Guarantee at least one of each class (uppercase/lowercase/digit/symbol).
+  if (!/[A-Z]/.test(out) || !/[a-z]/.test(out) || !/[0-9]/.test(out) || !/[^A-Za-z0-9]/.test(out)) return generatePassword()
+  return out
+}
+
 export default function VaultPage() {
   const userId = useAuthStore((s) => s.userId)
   const { entries, vaultKey, decryptFailures, unlock, lock, addEntry, editEntry, deleteEntry } = useVaultStore()
@@ -30,6 +48,10 @@ export default function VaultPage() {
   const [notes, setNotes] = useState('')
   const [category, setCategory] = useState<VaultCategory>('other')
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
+  const [categoryFilter, setCategoryFilter] = useState<VaultCategory | ''>('')
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
+  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set())
 
   const handleUnlock = async () => {
     if (!userId || !vaultPass) return
@@ -44,9 +66,9 @@ export default function VaultPage() {
     lock()
   }
 
-  const openAdd = () => { setEditId(null); setService(''); setUsername(''); setPassword(''); setUrl(''); setNotes(''); setCategory('other'); setShowModal(true) }
+  const openAdd = () => { setEditId(null); setService(''); setUsername(''); setPassword(''); setUrl(''); setNotes(''); setCategory('other'); setShowPassword(false); setShowModal(true) }
   const openEdit = (e: VaultEntry) => {
-    setEditId(e.id); setService(e.service); setUsername(e.username)
+    setEditId(e.id); setService(e.service); setUsername(e.username); setShowPassword(false)
     setPassword(e.password); setUrl(e.url ?? ''); setNotes(e.notes ?? ''); setCategory(e.category); setShowModal(true)
   }
 
@@ -65,13 +87,31 @@ export default function VaultPage() {
     setRevealed((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }
 
-  const copy = (text: string) => { navigator.clipboard.writeText(text) }
+  // key = `${entryId}:${field}` so the "✓ Tersalin" confirmation lands on the exact button clicked.
+  const copy = async (text: string, key: string, label = 'Password') => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(`${label} disalin`)
+      setCopiedKey(key)
+      setTimeout(() => { setCopiedKey((k) => (k === key ? null : k)) }, 2000)
+      setTimeout(() => {
+        navigator.clipboard.writeText('').then(() => { toast.info('Clipboard dibersihkan') }).catch(() => {})
+      }, CLIPBOARD_CLEAR_MS)
+    } catch {
+      toast.error('Gagal menyalin')
+    }
+  }
 
-  const filtered = entries.filter((e) =>
-    e.service.toLowerCase().includes(search.toLowerCase()) ||
-    e.username.toLowerCase().includes(search.toLowerCase()) ||
-    e.category.includes(search.toLowerCase())
-  )
+  const toggleNotes = (id: string) => {
+    setExpandedNotes((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }
+
+  const filtered = entries.filter((e) => {
+    const q = search.toLowerCase()
+    const matchesText = !q || e.service.toLowerCase().includes(q) || e.username.toLowerCase().includes(q)
+    const matchesCategory = categoryFilter ? e.category === categoryFilter : true
+    return matchesText && matchesCategory
+  })
 
   if (!vaultKey) {
     return (
@@ -96,7 +136,10 @@ export default function VaultPage() {
   return (
     <div>
       <div className="flex items-start justify-between mb-7 gap-4 flex-wrap">
-        <h2 className="text-[1.8rem]">🔐 Vault</h2>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h2 className="text-[1.8rem]">🔐 Vault</h2>
+          <NeubruTag label="🔓 Terbuka" color="green" />
+        </div>
         <div className="flex gap-2.5">
           <NeubruBtn color="orange" onClick={handleLock}>🔒 Lock</NeubruBtn>
           <NeubruBtn color="green" onClick={openAdd}>+ Entry</NeubruBtn>
@@ -115,7 +158,7 @@ export default function VaultPage() {
         <div className="mb-3"><NeubruInput value={search} onChange={setSearch} placeholder="🔍 Cari..." /></div>
         <div className="flex gap-2 flex-wrap">
           {CATEGORIES.map((c) => (
-            <NeubruBtn key={c.value} size="sm" color={search === c.value ? CAT_COLORS[c.value] : undefined} onClick={() => setSearch(search === c.value ? '' : c.value)}>{c.label}</NeubruBtn>
+            <NeubruBtn key={c.value} size="sm" color={categoryFilter === c.value ? CAT_COLORS[c.value] : undefined} onClick={() => setCategoryFilter(categoryFilter === c.value ? '' : c.value)}>{c.label}</NeubruBtn>
           ))}
         </div>
       </NeubruCard>
@@ -128,15 +171,29 @@ export default function VaultPage() {
             <div className="flex justify-between items-start mb-2">
               <div>
                 <div className="font-extrabold text-base">{e.service}</div>
-                <div className="text-sm text-nb-fg-muted">{e.username}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-nb-fg-muted break-all">{e.username}</span>
+                  <button className="text-xs font-bold uppercase border-2 border-nb-border bg-white px-2 py-0.5 shadow-nb-sm cursor-pointer hover:bg-nb-yellow active:translate-x-px active:translate-y-px active:shadow-none" onClick={() => copy(e.username, `${e.id}:username`, 'Username')}>{copiedKey === `${e.id}:username` ? '✓ Tersalin' : 'Copy'}</button>
+                </div>
               </div>
               <NeubruTag label={CATEGORIES.find((c) => c.value === e.category)?.label || e.category} color={CAT_COLORS[e.category] || 'yellow'} />
             </div>
             <div className="flex items-center gap-2 mb-1.5">
               <span className="font-mono text-sm font-semibold flex-1 break-all">{revealed.has(e.id) ? e.password : '•'.repeat(Math.min(e.password.length, 16))}</span>
               <button className="text-xs font-bold uppercase border-2 border-nb-border bg-white px-2 py-1 shadow-nb-sm cursor-pointer hover:bg-nb-yellow active:translate-x-px active:translate-y-px active:shadow-none" onClick={() => toggleReveal(e.id)}>{revealed.has(e.id) ? 'Sembunyi' : 'Lihat'}</button>
-              <button className="text-xs font-bold uppercase border-2 border-nb-border bg-white px-2 py-1 shadow-nb-sm cursor-pointer hover:bg-nb-yellow active:translate-x-px active:translate-y-px active:shadow-none" onClick={() => copy(e.password)}>Copy</button>
+              <button className="text-xs font-bold uppercase border-2 border-nb-border bg-white px-2 py-1 shadow-nb-sm cursor-pointer hover:bg-nb-yellow active:translate-x-px active:translate-y-px active:shadow-none" onClick={() => copy(e.password, `${e.id}:password`)}>{copiedKey === `${e.id}:password` ? '✓ Tersalin' : 'Copy'}</button>
             </div>
+            {e.url && (
+              <div className="mb-1.5">
+                <a href={/^https?:\/\//i.test(e.url!) ? e.url : `https://${e.url}`} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-nb-blue underline break-all">🔗 Buka</a>
+              </div>
+            )}
+            {e.notes && (
+              <div className="text-xs text-nb-fg-muted font-medium mb-1.5">
+                <span className={expandedNotes.has(e.id) ? 'whitespace-pre-wrap break-words' : 'inline-block max-w-[70%] truncate align-bottom'}>📝 {e.notes}</span>
+                <button className="ml-2 font-bold uppercase underline cursor-pointer bg-none border-none" onClick={() => toggleNotes(e.id)}>{expandedNotes.has(e.id) ? 'Tutup' : 'Lihat'}</button>
+              </div>
+            )}
             <div className="flex gap-1.5 mt-2">
               <NeubruBtn size="sm" color="yellow" onClick={() => openEdit(e)}>✎ Edit</NeubruBtn>
               <NeubruBtn size="sm" color="red" onClick={() => deleteEntry(e.id)}>✕ Hapus</NeubruBtn>
@@ -157,7 +214,11 @@ export default function VaultPage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Password</label>
-            <NeubruInput value={password} onChange={setPassword} type="password" placeholder="••••" onKeyDown={(e) => e.key === 'Enter' && save()} />
+            <div className="flex gap-1.5 items-center">
+              <div className="flex-1 min-w-0"><NeubruInput value={password} onChange={setPassword} type={showPassword ? 'text' : 'password'} placeholder="••••" onKeyDown={(e) => e.key === 'Enter' && save()} /></div>
+              <button type="button" title={showPassword ? 'Sembunyikan' : 'Lihat'} className="text-xs font-bold uppercase border-2 border-nb-border bg-white px-2 py-1.5 shadow-nb-sm cursor-pointer hover:bg-nb-yellow active:translate-x-px active:translate-y-px active:shadow-none" onClick={() => setShowPassword(!showPassword)}>{showPassword ? '🙈' : '👁'}</button>
+              <button type="button" title="Generate password" className="text-xs font-bold uppercase border-2 border-nb-border bg-white px-2 py-1.5 shadow-nb-sm cursor-pointer hover:bg-nb-yellow active:translate-x-px active:translate-y-px active:shadow-none" onClick={() => { setPassword(generatePassword()); setShowPassword(true) }}>🎲</button>
+            </div>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">

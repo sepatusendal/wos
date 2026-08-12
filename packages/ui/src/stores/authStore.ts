@@ -4,6 +4,7 @@ import { eq } from '@wos/db'
 import { hashPassword, verifyPassword, generateId, isoNow } from '@wos/shared'
 import { useFinanceStore } from './financeStore'
 import { useWealthStore } from './wealthStore'
+import { useLiabilityStore } from './liabilityStore'
 import { useNetWorthStore } from './netWorthStore'
 import { useTodoStore } from './todoStore'
 import { useVaultStore } from './vaultStore'
@@ -12,6 +13,7 @@ import { useHabitStore } from './habitStore'
 import { useNotesStore } from './notesStore'
 import { useSettingsStore } from './settingsStore'
 import { useLevelStore } from './levelStore'
+import { useAchievementStore } from './achievementStore'
 
 interface AuthState {
   adapter: DatabaseAdapter | null
@@ -52,6 +54,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (!res.ok || !res.userId) return { ok: false, error: res.error || 'Registrasi gagal' }
         set({ userId: res.userId, username: res.username ?? username, sessionToken: res.sessionToken ?? null, isAuthenticated: true, isVaultLocked: true })
         useLevelStore.getState().setUser(res.userId)
+        useAchievementStore.getState().setUser(res.userId)
         return { ok: true }
       } catch (e) {
         console.error('[auth] register failed:', e)
@@ -64,6 +67,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await adapter.db.insert('users').values({ id, username, password_hash: passwordHash, created_at: isoNow() })
       set({ userId: id, username, sessionToken: null, isAuthenticated: true, isVaultLocked: true })
       useLevelStore.getState().setUser(id)
+      useAchievementStore.getState().setUser(id)
       return { ok: true }
     } catch (e) {
       console.error('[auth] register failed:', e)
@@ -80,6 +84,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (!res.ok || !res.userId) return { ok: false, error: res.error || 'Login gagal' }
         set({ userId: res.userId, username: res.username ?? username, sessionToken: res.sessionToken ?? null, isAuthenticated: true, isVaultLocked: true })
         useLevelStore.getState().setUser(res.userId)
+        useAchievementStore.getState().setUser(res.userId)
         return { ok: true }
       } catch {
         return { ok: false, error: 'Login gagal' }
@@ -93,6 +98,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!valid) return { ok: false, error: 'Password salah' }
       set({ userId: user.id, username: user.username, sessionToken: null, isAuthenticated: true, isVaultLocked: true })
       useLevelStore.getState().setUser(user.id)
+      useAchievementStore.getState().setUser(user.id)
       return { ok: true }
     } catch {
       return { ok: false, error: 'Login gagal' }
@@ -108,6 +114,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // populated it, or vice versa).
     useFinanceStore.setState({ transactions: [], budgets: [], accounts: [], savingsGoals: [], recurring: [] })
     useWealthStore.setState({ assets: [] })
+    useLiabilityStore.setState({ liabilities: [] })
     useNetWorthStore.setState({ entries: [] })
     useTodoStore.setState({ todos: [] })
     useVaultStore.setState({ entries: [], vaultKey: null })
@@ -116,6 +123,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     useNotesStore.setState({ notes: [] })
     useSettingsStore.setState({ settings: null, loaded: false })
     useLevelStore.getState().setUser(null)
+    useAchievementStore.getState().setUser(null)
   },
 
   lockVault: () => set({ isVaultLocked: true }),

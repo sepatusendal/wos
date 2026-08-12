@@ -4,7 +4,7 @@ import { useFinanceStore } from '../../stores/financeStore'
 import { useNotesStore } from '../../stores/notesStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useRoastStore } from '../../stores/roastStore'
-import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag } from '../../components'
+import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruModal, NeubruTag, NeubruCheckbox } from '../../components'
 import { formatDate, todayStr, formatShortDate, formatMonthShort } from '@wos/shared'
 import { useFormatCurrency } from '../../stores/useFormatCurrency'
 import type { RecurringTransaction } from '@wos/shared'
@@ -15,8 +15,11 @@ import { TransactionPDF } from '../../utils/TransactionPDF'
 import { useLevelStore } from '../../stores/levelStore'
 import MoneyTimeline from '../../components/MoneyTimeline'
 
-const EXPENSE_CATS = ['Makan', 'Transport', 'Belanja', 'Hiburan', 'Tagihan', 'Kesehatan', 'Pendidikan', 'Transfer', 'Lainnya']
-const INCOME_CATS = ['Gaji', 'Freelance', 'Investasi', 'Bisnis', 'Transfer', 'Lainnya']
+// 'Transfer' is deliberately excluded — it's only ever created by the
+// Transfer action (moving money between your own accounts), never picked
+// manually, so it can't accidentally count toward a budget or income/expense.
+const EXPENSE_CATS = ['Makan', 'Transport', 'Belanja', 'Hiburan', 'Tagihan', 'Kesehatan', 'Pendidikan', 'Lainnya']
+const INCOME_CATS = ['Gaji', 'Freelance', 'Investasi', 'Bisnis', 'Lainnya']
 const CAT_COLORS: Record<string, 'yellow' | 'blue' | 'green' | 'pink' | 'orange' | 'purple' | 'red'> = {
   Gaji: 'green', Freelance: 'blue', Investasi: 'purple', Bisnis: 'orange',
   Makan: 'yellow', Transport: 'blue', Belanja: 'pink', Hiburan: 'orange',
@@ -39,9 +42,9 @@ export default function FinancePage() {
     transactions, budgets, accounts, savingsGoals, recurring,
     budgetRollover,
     fetchAll, addTransaction, editTransaction, deleteTransaction,
-    addBudget, deleteBudget,
+    addBudget, editBudget, deleteBudget,
     addAccount, editAccount, deleteAccount,
-    addSavingsGoal, editSavingsGoal, deleteSavingsGoal,
+    addSavingsGoal, editSavingsGoal, deleteSavingsGoal, getGoalProgress,
     addRecurring, editRecurring, toggleRecurring, deleteRecurring,
     transferBetweenAccounts, processRecurring,
   } = useFinanceStore()
@@ -64,6 +67,7 @@ export default function FinancePage() {
   // CSV Import states
   const [showImportModal, setShowImportModal] = useState(false)
   const [importPreview, setImportPreview] = useState<any[]>([])
+  const [csvAccountId, setCsvAccountId] = useState('')
   const [importFile, setImportFile] = useState<File | null>(null)
   const [, setImportColMap] = useState<{ date: string; desc: string; amount: string; type: string }>({ date: '', desc: '', amount: '', type: '' })
   const [importDuplicates, setImportDuplicates] = useState(0)
@@ -78,6 +82,8 @@ export default function FinancePage() {
   const [flexibility, setFlexibility] = useState<'fixed' | 'flexible' | 'discretionary'>('flexible')
   const [budgetCat, setBudgetCat] = useState('Makan')
   const [budgetLimit, setBudgetLimit] = useState('')
+  const [budgetRolloverEnabled, setBudgetRolloverEnabled] = useState(false)
+  const [budgetEditId, setBudgetEditId] = useState<string | null>(null)
 
   const [transferFrom, setTransferFrom] = useState('')
   const [transferTo, setTransferTo] = useState('')
@@ -93,6 +99,7 @@ export default function FinancePage() {
   const [goalTarget, setGoalTarget] = useState('')
   const [goalSaved, setGoalSaved] = useState('')
   const [goalDeadline, setGoalDeadline] = useState('')
+  const [goalAccountId, setGoalAccountId] = useState('')
   const [goalEditId, setGoalEditId] = useState<string | null>(null)
 
   const [recName, setRecName] = useState('')
@@ -139,8 +146,12 @@ export default function FinancePage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const totalIncome = useMemo(() => transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0), [transactions])
-  const totalExpense = useMemo(() => transactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0), [transactions])
+  // Transfers move money between your own accounts — they're not real
+  // income/expense and would otherwise inflate both sides of every KPI,
+  // the cash flow chart, and Roast Mode every time you move money between
+  // wallets.
+  const totalIncome = useMemo(() => transactions.filter((t) => t.type === 'income' && t.category !== 'Transfer').reduce((s, t) => s + t.amount, 0), [transactions])
+  const totalExpense = useMemo(() => transactions.filter((t) => t.type === 'expense' && t.category !== 'Transfer').reduce((s, t) => s + t.amount, 0), [transactions])
   const balance = totalIncome - totalExpense
   const accountTotal = useMemo(() => accounts.reduce((s, a) => s + a.balance, 0), [accounts])
 
@@ -153,6 +164,7 @@ export default function FinancePage() {
       months.push({ key, income: 0, expense: 0 })
     }
     transactions.forEach((t) => {
+      if (t.category === 'Transfer') return
       const key = t.date.slice(0, 7)
       const bucket = months.find((m) => m.key === key)
       if (!bucket) return
@@ -192,17 +204,9 @@ export default function FinancePage() {
 
   const activeFilterCount = [searchQuery, filterAccount, filterCategory, monthFilter].filter(Boolean).length + (filter !== 'all' ? 1 : 0)
 
-  const budgetSpending = useMemo(() => {
-    const thisMonth = todayStr().slice(0, 7)
-    return budgets.map((b) => {
-      const spent = transactions.filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(thisMonth)).reduce((s, t) => s + t.amount, 0)
-      return { ...b, spent, pct: b.limit > 0 ? Math.min(Math.round((spent / b.limit) * 100), 100) : 0 }
-    })
-  }, [budgets, transactions])
-
   const roastText = useMemo(() => {
     if (!roastMode) return ''
-    return generateRoast(transactions, budgetSpending)
+    return generateRoast(transactions, budgetVsActual)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roastMode, transactions, budgets, generateRoast])
 
@@ -222,16 +226,18 @@ export default function FinancePage() {
         .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(thisMonthKey))
         .reduce((s, t) => s + t.amount, 0)
 
-      // Rollover from last month
-      const lastMonthSpent = transactions
-        .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(prevMonths[0]!))
-        .reduce((s, t) => s + t.amount, 0)
-      const rollover = Math.max(0, (b.limit + (budgetRollover[b.category] || 0)) - lastMonthSpent)
+      // Rollover badge shows the exact same figure that's added to the
+      // effective limit below — previously this was a separately (and
+      // wrongly) computed number that didn't match.
+      const rollover = budgetRollover[b.category] || 0
 
       // Effective budget = base limit + rollover
-      const effectiveLimit = b.limit + (budgetRollover[b.category] || 0)
-      const pct = Math.min(effectiveLimit > 0 ? Math.round((spentThisMonth / effectiveLimit) * 100) : 0, 100)
-      const barPct = Math.min(pct, 100)
+      const effectiveLimit = b.limit + rollover
+      // Unclamped — a real overspend (150%, 300%) should be visible as such,
+      // not flattened to "100%" like the bar width is.
+      const pctRaw = effectiveLimit > 0 ? Math.round((spentThisMonth / effectiveLimit) * 100) : 0
+      const pct = pctRaw
+      const barPct = Math.min(Math.max(pctRaw, 0), 100)
 
       // Overspend analysis: check last 3 months
       const historicalPcts = prevMonths.map((mk) => {
@@ -270,27 +276,38 @@ export default function FinancePage() {
     if (isNaN(numAmount) || numAmount <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
     setSaving(true)
     try {
-      const oldAmount = editId ? useFinanceStore.getState().transactions.find((t) => t.id === editId)?.amount ?? 0 : 0
       if (editId) { await editTransaction({ id: editId, type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }) }
       else { await addTransaction(userId, { type, amount: numAmount, category, description: desc, date, accountId: txAccountId || null, flexibility }); useLevelStore.getState().addXP(5); toast.success('⚡ +5 XP') }
-      if (type === 'expense') checkBudgetAlert(category, numAmount, oldAmount)
+      if (type === 'expense') checkBudgetAlert(category, numAmount)
       setShowTxModal(false)
     } finally { setSaving(false) }
   }
 
-  const checkBudgetAlert = (cat: string, newAmount: number, oldAmount = 0) => {
+  const checkBudgetAlert = (cat: string, newAmount: number) => {
     const fresh = useFinanceStore.getState()
     const budget = fresh.budgets.find((b) => b.category === cat)
     if (!budget || budget.limit <= 0) return
-    const currentSpent = fresh.transactions.filter((t) => t.type === 'expense' && t.category === cat).reduce((s, t) => s + t.amount, 0)
-    const totalAfter = currentSpent - oldAmount + newAmount
-    const pct = Math.round((totalAfter / budget.limit) * 100)
-    if (pct >= 100) {
-      toast.error(`Budget exceeded for "${cat}"!`, { description: `Spent ${formatCurrency(totalAfter)} / ${formatCurrency(budget.limit)} (${pct}%)` })
-    } else if (pct >= 80) {
-      toast.warning(`Budget warning for "${cat}"`, { description: `Spent ${formatCurrency(totalAfter)} / ${formatCurrency(budget.limit)} (${pct}%)` })
+    const effectiveLimit = budget.limit + (fresh.budgetRollover[cat] || 0)
+    if (effectiveLimit <= 0) return
+    const thisMonth = todayStr().slice(0, 7)
+    // `fresh` already reflects the just-saved transaction (add or edit), so
+    // subtracting this transaction's own amount gives the state *before* it
+    // — comparing before vs after means we only toast when a threshold is
+    // actually crossed, not every time a user is already over it.
+    const spentAfter = fresh.transactions.filter((t) => t.type === 'expense' && t.category === cat && t.date.startsWith(thisMonth)).reduce((s, t) => s + t.amount, 0)
+    const spentBefore = spentAfter - newAmount
+    const pctBefore = (spentBefore / effectiveLimit) * 100
+    const pctAfter = (spentAfter / effectiveLimit) * 100
+    const pctDisplay = Math.round(pctAfter)
+    if (pctBefore < 100 && pctAfter >= 100) {
+      toast.error(`Budget exceeded for "${cat}"!`, { description: `Spent ${formatCurrency(spentAfter)} / ${formatCurrency(effectiveLimit)} (${pctDisplay}%)` })
+    } else if (pctBefore < 80 && pctAfter >= 80) {
+      toast.warning(`Budget warning for "${cat}"`, { description: `Spent ${formatCurrency(spentAfter)} / ${formatCurrency(effectiveLimit)} (${pctDisplay}%)` })
     }
   }
+
+  const openAddBudget = () => { setBudgetEditId(null); setBudgetCat('Makan'); setBudgetLimit(''); setBudgetRolloverEnabled(false); setShowBudgetModal(true) }
+  const openEditBudget = (b: { id: string; category: string; limit: number; rolloverEnabled: boolean }) => { setBudgetEditId(b.id); setBudgetCat(b.category); setBudgetLimit(String(b.limit)); setBudgetRolloverEnabled(b.rolloverEnabled); setShowBudgetModal(true) }
 
   const saveBudget = async () => {
     if (!userId || !budgetCat || !budgetLimit || savingBudget) return
@@ -298,10 +315,15 @@ export default function FinancePage() {
     if (isNaN(numLimit) || numLimit <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
     setSavingBudget(true)
     try {
-      const result = await addBudget(userId, { category: budgetCat, limit: numLimit })
-      if (!result.ok) { toast.error(result.error ?? 'Gagal menyimpan'); return }
-      useLevelStore.getState().addXP(20)
-      toast.success('⚡ +20 XP')
+      if (budgetEditId) {
+        const result = await editBudget({ id: budgetEditId, limit: numLimit, rolloverEnabled: budgetRolloverEnabled })
+        if (!result.ok) { toast.error(result.error ?? 'Gagal menyimpan'); return }
+      } else {
+        const result = await addBudget(userId, { category: budgetCat, limit: numLimit, rolloverEnabled: budgetRolloverEnabled })
+        if (!result.ok) { toast.error(result.error ?? 'Gagal menyimpan'); return }
+        useLevelStore.getState().addXP(20)
+        toast.success('⚡ +20 XP')
+      }
       setBudgetLimit('')
       setShowBudgetModal(false)
     } finally { setSavingBudget(false) }
@@ -319,22 +341,28 @@ export default function FinancePage() {
     } finally { setSavingAccount(false) }
   }
 
-  const openAddGoal = () => { setGoalEditId(null); setGoalName(''); setGoalTarget(''); setGoalSaved(''); setGoalDeadline(''); setShowGoalModal(true) }
-  const openEditGoal = (g: any) => { setGoalEditId(g.id); setGoalName(g.name); setGoalTarget(String(g.targetAmount)); setGoalSaved(String(g.savedAmount)); setGoalDeadline(g.deadline ?? ''); setShowGoalModal(true) }
+  const openAddGoal = () => { setGoalEditId(null); setGoalName(''); setGoalTarget(''); setGoalSaved(''); setGoalDeadline(''); setGoalAccountId(''); setShowGoalModal(true) }
+  const openEditGoal = (g: any) => { setGoalEditId(g.id); setGoalName(g.name); setGoalTarget(String(g.targetAmount)); setGoalSaved(String(g.savedAmount)); setGoalDeadline(g.deadline ?? ''); setGoalAccountId(g.accountId ?? ''); setShowGoalModal(true) }
   const saveGoal = async () => {
     if (!userId || !goalName || !goalTarget || savingGoal) return
     const target = Number(goalTarget)
     if (isNaN(target) || target <= 0) { toast.error('Jumlah harus lebih dari 0'); return }
     const saved = goalSaved ? Number(goalSaved) : 0
     if (isNaN(saved) || saved < 0) { toast.error('Jumlah terkumpul tidak valid'); return }
-    const pct = target > 0 ? Math.round((saved / target) * 100) : 0
+    const accountId = goalAccountId || null
+    // Only fire confetti when actually crossing into 100%, not on every save
+    // of an already-complete goal (e.g. just renaming it).
+    const existing = goalEditId ? savingsGoals.find((g) => g.id === goalEditId) : null
+    const prevPct = existing ? Math.min(target > 0 ? (getGoalProgress(existing) / target) * 100 : 0, 100) : 0
+    const newProgress = accountId ? (accounts.find((a) => a.id === accountId)?.balance ?? saved) : saved
+    const newPct = target > 0 ? (newProgress / target) * 100 : 0
     setSavingGoal(true)
     try {
-      if (goalEditId) await editSavingsGoal({ id: goalEditId, name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
-      else await addSavingsGoal(userId, { name: goalName, targetAmount: target, savedAmount: saved, deadline: goalDeadline || null })
+      if (goalEditId) await editSavingsGoal({ id: goalEditId, name: goalName, targetAmount: target, savedAmount: saved, accountId, deadline: goalDeadline || null })
+      else await addSavingsGoal(userId, { name: goalName, targetAmount: target, savedAmount: saved, accountId, deadline: goalDeadline || null })
       setShowGoalModal(false)
     } finally { setSavingGoal(false) }
-    if (pct >= 100) {
+    if (prevPct < 100 && newPct >= 100) {
       ;(window as any).__wosConfetti?.()
     }
   }
@@ -559,7 +587,7 @@ export default function FinancePage() {
       try {
         await addTransaction(userId, {
           type: row.type, amount: row.amount, category: row.category,
-          description: row.description, date: row.date, accountId: null, flexibility: 'flexible',
+          description: row.description, date: row.date, accountId: csvAccountId || null, flexibility: 'flexible',
         })
         existingSet.add(key) // Prevent internal CSV duplicates
         imported++
@@ -596,7 +624,7 @@ export default function FinancePage() {
           </button>
         </div>
         <div className="flex gap-2.5 flex-wrap">
-          <NeubruBtn color="yellow" onClick={() => setShowBudgetModal(true)}>🎯 Budget</NeubruBtn>
+          <NeubruBtn color="yellow" onClick={openAddBudget}>🎯 Budget</NeubruBtn>
           <NeubruBtn color="purple" onClick={openAddRecurring}>🔁 Recurring</NeubruBtn>
           <NeubruBtn color="pink" onClick={openAddGoal}>🎉 Tabungan</NeubruBtn>
           <NeubruBtn color="blue" onClick={openAddAccount}>🏦 Akun</NeubruBtn>
@@ -642,15 +670,15 @@ export default function FinancePage() {
         </div>
       )}
 
-      {budgetSpending.filter((b) => b.pct >= 80).length > 0 && (
+      {budgetVsActual.filter((b) => b.pct >= 80).length > 0 && (
         <div className="mb-5 border-2 border-nb-orange bg-nb-orange/10 p-4">
           <div className="font-bold text-sm mb-2">⚠️ Budget Warnings</div>
           <div className="flex flex-col gap-1.5">
-            {budgetSpending.filter((b) => b.pct >= 80).map((b) => (
+            {budgetVsActual.filter((b) => b.pct >= 80).map((b) => (
               <div key={b.id} className="flex items-center justify-between text-sm">
                 <span className="font-bold">{b.category}</span>
                 <span className={b.pct >= 100 ? 'text-nb-red font-bold' : 'text-nb-orange'}>
-                  {formatCurrency(b.spent)} / {formatCurrency(b.limit)} ({b.pct}%)
+                  {formatCurrency(b.spent)} / {formatCurrency(b.effectiveLimit)} ({b.pct}%)
                 </span>
               </div>
             ))}
@@ -701,9 +729,9 @@ export default function FinancePage() {
                     <div className="flex items-center justify-between mb-1.5">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold">{b.category}</span>
-                        {b.rollover > 0 && (
-                          <span className="text-[10px] font-bold bg-nb-yellow/20 px-1.5 py-0.5 border border-nb-yellow/60">
-                            +{formatCurrency(b.rollover)} rollover
+                        {b.rollover !== 0 && (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 border ${b.rollover > 0 ? 'bg-nb-yellow/20 border-nb-yellow/60' : 'bg-nb-red/10 border-nb-red/60 text-nb-red'}`}>
+                            {b.rollover > 0 ? '+' : ''}{formatCurrency(b.rollover)} rollover
                           </span>
                         )}
                       </div>
@@ -715,11 +743,13 @@ export default function FinancePage() {
                       </span>
                     </div>
                     <div className="relative h-7 bg-nb-bg border-2 border-nb-border overflow-hidden">
-                      {/* Budget bar (gray outline — shows the limit) */}
-                      <div
-                        className="absolute inset-0 border-r-[3px] border-dashed border-nb-fg-muted/40"
-                        style={{ width: `${Math.min(Math.round((b.effectiveLimit / b.effectiveLimit) * 100), 100)}%` }}
-                      />
+                      {/* Marks where the base limit ends within the effective (limit+rollover) bar */}
+                      {b.rollover !== 0 && (
+                        <div
+                          className="absolute inset-y-0 border-r-[3px] border-dashed border-nb-fg-muted/40"
+                          style={{ width: `${Math.min(Math.round((b.limit / b.effectiveLimit) * 100), 100)}%` }}
+                        />
+                      )}
                       {/* Actual bar (colored, filled) */}
                       <div
                         className="h-full transition-all duration-500"
@@ -734,6 +764,10 @@ export default function FinancePage() {
                         <span>💡</span> {b.suggestion}
                       </div>
                     )}
+                    <div className="flex gap-2 mt-2">
+                      <NeubruBtn size="sm" color="yellow" onClick={() => openEditBudget(b)}>✎ Edit</NeubruBtn>
+                      <NeubruBtn size="sm" color="red" onClick={() => deleteBudget(b.id)}>✕ Hapus</NeubruBtn>
+                    </div>
                   </div>
                 )
               })}
@@ -769,8 +803,10 @@ export default function FinancePage() {
           <h3 className="mb-3">🎉 Tabungan</h3>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
             {savingsGoals.map((g) => {
-              const pct = Math.min(g.targetAmount > 0 ? Math.round((g.savedAmount / g.targetAmount) * 100) : 0, 100)
-              const done = g.savedAmount >= g.targetAmount
+              const progress = getGoalProgress(g)
+              const pct = Math.min(g.targetAmount > 0 ? Math.round((progress / g.targetAmount) * 100) : 0, 100)
+              const done = progress >= g.targetAmount
+              const linkedAccount = g.accountId ? accounts.find((a) => a.id === g.accountId) : null
               return (
                 <NeubruCard key={g.id}>
                   <div className="flex justify-between items-center mb-2">
@@ -778,8 +814,13 @@ export default function FinancePage() {
                     <NeubruTag label={`${pct}%`} color={done ? 'green' : pct > 80 ? 'orange' : 'blue'} />
                   </div>
                   <div className="font-mono font-extrabold text-sm">
-                    {formatCurrency(g.savedAmount)} <span className="text-xs opacity-50">/ {formatCurrency(g.targetAmount)}</span>
+                    {formatCurrency(progress)} <span className="text-xs opacity-50">/ {formatCurrency(g.targetAmount)}</span>
                   </div>
+                  {linkedAccount ? (
+                    <div className="text-xs text-nb-fg-muted mt-0.5">🔗 Saldo live: {linkedAccount.name}</div>
+                  ) : (
+                    <div className="text-xs text-nb-fg-muted mt-0.5">✏️ Manual — tidak terhubung transaksi</div>
+                  )}
                   {g.deadline && <div className="text-xs text-nb-fg-muted mt-0.5">Target: {formatDate(g.deadline)}</div>}
                   <div className="mt-2 h-3 bg-nb-bg border-2 border-nb-border overflow-hidden">
                     <div className="h-full transition-all" style={{ width: `${pct}%`, background: done ? '#22c55e' : pct > 80 ? '#ff8a00' : '#2f6bff' }} />
@@ -820,27 +861,6 @@ export default function FinancePage() {
                   <NeubruBtn size="sm" color="yellow" className="nb-btn-icon" onClick={() => openEditRecurring(r)}>✎</NeubruBtn>
                   <NeubruBtn size="sm" color="red" className="nb-btn-icon" onClick={() => deleteRecurring(r.id)}>✕</NeubruBtn>
                 </div>
-              </NeubruCard>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {budgetSpending.length > 0 && (
-        <div className="mb-7">
-          <h3 className="mb-3">🎯 Budget</h3>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
-            {budgetSpending.map((b) => (
-              <NeubruCard key={b.id}>
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold uppercase text-nb-fg-muted">{b.category}</span>
-                  <NeubruTag label={`${b.pct}%`} color={b.pct > 80 ? 'red' : 'green'} />
-                </div>
-                <div className="font-mono font-extrabold text-sm">{formatCurrency(b.spent)} <span className="text-xs opacity-50">/ {formatCurrency(b.limit)}</span></div>
-                <div className="mt-2 h-3 bg-nb-bg border-2 border-nb-border overflow-hidden">
-                  <div className="h-full transition-all" style={{ width: `${b.pct}%`, background: b.pct > 80 ? '#ff4b4b' : '#22c55e' }} />
-                </div>
-                <NeubruBtn size="sm" color="red" className="mt-3" onClick={() => deleteBudget(b.id)}>Hapus Budget</NeubruBtn>
               </NeubruCard>
             ))}
           </div>
@@ -1026,7 +1046,7 @@ export default function FinancePage() {
         </div>
       </NeubruModal>
 
-      <NeubruModal open={showBudgetModal} onClose={() => setShowBudgetModal(false)} title="Atur Budget">
+      <NeubruModal open={showBudgetModal} onClose={() => setShowBudgetModal(false)} title={budgetEditId ? 'Edit Budget' : 'Atur Budget'}>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Kategori</label>
@@ -1036,6 +1056,10 @@ export default function FinancePage() {
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Limit</label>
             <NeubruInput value={budgetLimit} onChange={setBudgetLimit} placeholder="1000000" type="number" onKeyDown={(e) => e.key === 'Enter' && saveBudget()} />
           </div>
+        </div>
+        <div className="flex items-center gap-2.5 mb-4">
+          <NeubruCheckbox checked={budgetRolloverEnabled} onChange={() => setBudgetRolloverEnabled((v) => !v)} />
+          <label className="text-xs font-bold text-nb-fg-muted">Sisa bulan lalu ikut ke bulan ini (rollover)</label>
         </div>
         <NeubruBtn color="green" onClick={saveBudget} disabled={savingBudget}>💾 Simpan Budget</NeubruBtn>
       </NeubruModal>
@@ -1071,10 +1095,21 @@ export default function FinancePage() {
             <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Target</label>
             <NeubruInput value={goalTarget} onChange={setGoalTarget} type="number" placeholder="5000000" onKeyDown={(e) => e.key === 'Enter' && saveGoal()} />
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Terkumpul</label>
-            <NeubruInput value={goalSaved} onChange={setGoalSaved} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && saveGoal()} />
-          </div>
+          {!goalAccountId && (
+            <div className="flex flex-col gap-1.5">
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Terkumpul (manual)</label>
+              <NeubruInput value={goalSaved} onChange={setGoalSaved} type="number" placeholder="0" onKeyDown={(e) => e.key === 'Enter' && saveGoal()} />
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5 mb-4">
+          <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Tautkan ke Akun (opsional)</label>
+          <NeubruSelect value={goalAccountId} onChange={setGoalAccountId} options={[{ value: '', label: '— Tidak ditautkan (manual) —' }, ...accounts.map((a) => ({ value: a.id, label: `${ACCOUNT_ICONS[a.type] ?? '💰'} ${a.name}` }))]} />
+          <p className="text-xs text-nb-fg-muted">
+            {goalAccountId
+              ? 'Progress = saldo akun ini, live. "Nabung" = transfer uang ke akun ini lewat tombol Transfer.'
+              : 'Tanpa akun, "Terkumpul" harus kamu update manual — tidak otomatis dari transaksi.'}
+          </p>
         </div>
         <div className="flex flex-col gap-1.5 mb-4">
           <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Deadline (opsional)</label>
@@ -1155,7 +1190,7 @@ export default function FinancePage() {
       </NeubruModal>
 
       {/* ── CSV Import Modal ── */}
-      <NeubruModal open={showImportModal} onClose={() => { setShowImportModal(false); setImportPreview([]) }} title="📥 Import CSV">
+      <NeubruModal open={showImportModal} onClose={() => { setShowImportModal(false); setImportPreview([]); setCsvAccountId('') }} title="📥 Import CSV">
         {importPreview.length === 0 ? (
           <p className="text-sm text-nb-fg-muted">Parsing CSV...</p>
         ) : (
@@ -1163,6 +1198,11 @@ export default function FinancePage() {
             <div className="flex gap-3 mb-4 text-sm flex-wrap">
               <span className="font-bold">📄 {importFile?.name}</span>
               <span className="text-nb-fg-muted">{importPreview.length} rows detected</span>
+            </div>
+            <div className="flex flex-col gap-1.5 mb-4">
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Masukkan ke Akun</label>
+              <NeubruSelect value={csvAccountId} onChange={setCsvAccountId} options={[{ value: '', label: '— Tanpa akun —' }, ...accounts.map((a) => ({ value: a.id, label: `${ACCOUNT_ICONS[a.type] ?? '💰'} ${a.name}` }))]} />
+              {!csvAccountId && <p className="text-xs text-nb-fg-muted">Tanpa akun, saldo akun tidak akan ikut berubah — transaksi tetap tercatat tapi terpisah dari saldo bank.</p>}
             </div>
             {/* Preview table */}
             <div className="border-2 border-nb-border mb-4 max-h-48 overflow-y-auto">

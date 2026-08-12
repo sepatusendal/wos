@@ -31,6 +31,8 @@ export const BudgetSchema = z.object({
   id: z.string().uuid(),
   category: z.string().min(1),
   limit: z.number().positive(),
+  createdAt: z.string().default(''),
+  rolloverEnabled: z.boolean().default(false),
 })
 
 export const AssetSchema = z.object({
@@ -41,8 +43,23 @@ export const AssetSchema = z.object({
   unitPrice: z.number().positive(),
   buyPrice: z.number().positive().nullable().default(null),
   buyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+  // Ticker symbol for stock/crypto — lets unitPrice be refreshed live via
+  // packages/shared/src/market.ts instead of always being typed manually.
+  ticker: z.string().nullable().default(null),
   notes: z.string().default(''),
   lastUpdated: z.string().datetime(),
+  createdAt: z.string().datetime(),
+})
+
+export const LiabilityType = z.enum(['mortgage', 'loan', 'credit_card', 'other'])
+export type LiabilityType = z.infer<typeof LiabilityType>
+
+export const LiabilitySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  type: LiabilityType,
+  amount: z.number().positive(),
+  notes: z.string().default(''),
   createdAt: z.string().datetime(),
 })
 
@@ -108,7 +125,14 @@ export const SavingsGoalSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
   targetAmount: z.number().positive(),
+  // Manual fallback only — ignored for progress display once `accountId` is
+  // set, since a linked account's live balance is the real progress. Kept
+  // so goals can still exist without a dedicated account.
   savedAmount: z.number().default(0),
+  // Link to an Account: "saving" = transferring money into this account via
+  // the existing Transfer feature. Progress becomes the account's live
+  // balance instead of a manually-typed number.
+  accountId: z.string().uuid().nullable().default(null),
   deadline: z.string().nullable().default(null),
   createdAt: z.string().datetime(),
 })
@@ -131,6 +155,7 @@ export const RecurringTransactionSchema = z.object({
 export type Transaction = z.infer<typeof TransactionSchema>
 export type Budget = z.infer<typeof BudgetSchema>
 export type Asset = z.infer<typeof AssetSchema>
+export type Liability = z.infer<typeof LiabilitySchema>
 export type NetWorthEntry = z.infer<typeof NetWorthEntrySchema>
 export type VaultEntry = z.infer<typeof VaultEntrySchema>
 export type TodoItem = z.infer<typeof TodoSchema>

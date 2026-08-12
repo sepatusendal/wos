@@ -32,7 +32,7 @@ export default function YearReviewPage() {
 
   const userId = useAuthStore((s) => s.userId)
   const formatCurrency = useFormatCurrency()
-  const { transactions, savingsGoals, fetchAll: fetchFinance } = useFinanceStore()
+  const { transactions, savingsGoals, getGoalProgress, fetchAll: fetchFinance } = useFinanceStore()
   const { assets: _assets, fetchAll: fetchWealth } = useWealthStore()
   const { entries, fetchAll: fetchNetWorth } = useNetWorthStore()
   const { habits, logs, fetchAll: fetchHabits } = useHabitStore()
@@ -126,12 +126,26 @@ export default function YearReviewPage() {
       }
     }
 
+    const today = new Date()
     const monthGrid = MONTHS.map((mLabel, i) => {
       const monthStr = `${year}-${String(i + 1).padStart(2, '0')}`
       const monthLogs = yearLogs.filter((l) => l.date.startsWith(monthStr) && l.done)
-      const totalPossible = habits.length * new Date(year, i + 1, 0).getDate()
+      const monthStart = new Date(year, i, 1)
+      const monthEnd = new Date(year, i + 1, 0)
+      // Only count a habit against a month if it existed for at least part of
+      // that month, and only count days up to today (future months/days
+      // can't have been "missed" yet).
+      let totalPossible = 0
+      for (const h of habits) {
+        const createdAt = new Date(h.createdAt)
+        const rangeStart = createdAt > monthStart ? createdAt : monthStart
+        const rangeEnd = today < monthEnd ? today : monthEnd
+        if (rangeEnd < rangeStart) continue
+        const days = Math.floor((rangeEnd.getTime() - rangeStart.getTime()) / 86400000) + 1
+        totalPossible += Math.max(0, days)
+      }
       const rate = totalPossible > 0 ? Math.round((monthLogs.length / totalPossible) * 100) : 0
-      return { month: mLabel, rate, count: monthLogs.length }
+      return { month: mLabel, rate, count: monthLogs.length, hasData: totalPossible > 0 }
     })
 
     return { totalCheckins, bestHabitName, bestHabitEmoji, bestCount, monthGrid }
@@ -144,25 +158,54 @@ export default function YearReviewPage() {
 
     const startNw = yearEntries.length > 0 ? (yearEntries[0]?.netWorth ?? 0) : 0
     const endNw = yearEntries.length > 0 ? (yearEntries[yearEntries.length - 1]?.netWorth ?? 0) : 0
-    const changePct = startNw > 0 ? Math.round(((endNw - startNw) / startNw) * 100) : 0
+    // A single data point has no "change" to speak of — showing "+0%" reads
+    // as a real (if flat) trend when it's actually just "no history yet".
+    const hasEnoughForTrend = yearEntries.length >= 2
+    const changePct = hasEnoughForTrend && startNw > 0 ? Math.round(((endNw - startNw) / startNw) * 100) : null
 
     const chartData = yearEntries.map((e) => ({
       label: e.date ? `${MONTHS[parseInt(e.date.slice(5, 7)) - 1]}` : '',
       netWorth: e.netWorth,
     }))
 
-    return { startNw, endNw, changePct, chartData }
+    return { startNw, endNw, changePct, chartData, hasEnoughForTrend }
   }, [entries, year])
 
   const goalsData = useMemo(() => {
-    const achieved = savingsGoals.filter((g) => g.savedAmount >= g.targetAmount).length
+    const achieved = savingsGoals.filter((g) => getGoalProgress(g) >= g.targetAmount).length
     return { total: savingsGoals.length, achieved, list: savingsGoals }
-  }, [savingsGoals])
+  }, [savingsGoals, getGoalProgress])
 
   const daysTracked = useMemo(() => {
     const dates = new Set(yearTx.map((t) => t.date))
     return dates.size
   }, [yearTx])
+
+  // A fully-completed past year gets the real "out of 365" framing; the
+  // current, still-in-progress year is judged against days-elapsed-so-far,
+  // or a perfect tracker would see "224/365" and read it as failing.
+  const isCurrentYear = year === currentYear
+  const daysInYear = (y: number) => (new Date(y, 1, 29).getMonth() === 1 ? 366 : 365)
+  const daysElapsedThisYear = useMemo(() => {
+    if (!isCurrentYear) return daysInYear(year)
+    const now = new Date()
+    const start = new Date(year, 0, 1)
+    return Math.floor((now.getTime() - start.getTime()) / 86400000) + 1
+  }, [isCurrentYear, year])
+
+  // Below this, the full "Wrapped" treatment (hero, closing, etc.) reads as
+  // broken rather than special — a lighter, honest state is shown instead.
+  const MIN_MONTHS_FOR_WRAPPED = 3
+  const monthsWithData = useMemo(() => new Set(yearTx.map((t) => t.date.slice(0, 7))).size, [yearTx])
+  const isPastYear = year < currentYear
+  const hasEnoughForWrapped = isPastYear || monthsWithData >= MIN_MONTHS_FOR_WRAPPED
+
+  // Earliest year with any transaction data — can't navigate further back
+  // than that (there's nothing to show, and it looks like a broken page).
+  const earliestDataYear = useMemo(() => {
+    if (transactions.length === 0) return currentYear
+    return transactions.reduce((min, t) => Math.min(min, Number(t.date.slice(0, 4))), currentYear)
+  }, [transactions, currentYear])
 
   const bestMonthLabel = useMemo(() => {
     const byMonth: Record<string, { income: number; expense: number }> = {}
@@ -193,6 +236,7 @@ export default function YearReviewPage() {
       <div className="flex items-center justify-center gap-4 mb-10 sticky top-0 z-20 py-4 bg-nb-bg/90 backdrop-blur-sm">
         <button
           onClick={() => setYear((y) => y - 1)}
+          disabled={year <= earliestDataYear}
           className="nb-btn nb-btn-sm"
         >
           ← {year - 1}
@@ -207,6 +251,20 @@ export default function YearReviewPage() {
         </button>
       </div>
 
+      {loaded && hasData && !hasEnoughForWrapped ? (
+        <div className="nb-panel text-center py-24 max-w-lg mx-auto">
+          <div className="text-6xl mb-4">📆</div>
+          <div className="font-black text-xl uppercase mb-2">
+            {isCurrentYear ? `${year} So Far` : 'Belum Cukup Data'}
+          </div>
+          <p className="text-sm text-nb-fg-muted">
+            Baru {monthsWithData} dari {MIN_MONTHS_FOR_WRAPPED} bulan data untuk {year}. Year in Review
+            paling seru begitu ada cukup cerita buat direview — balik lagi nanti, atau lihat tahun lain
+            yang datanya sudah lebih lengkap.
+          </p>
+        </div>
+      ) : (
+      <>
       {/* ═══ Section 1: Hero ═══ */}
       <section className="min-h-[85vh] flex items-center justify-center relative overflow-hidden mb-8">
         {/* Decorative shapes */}
@@ -229,7 +287,7 @@ export default function YearReviewPage() {
             {year}
           </div>
           <div className="text-2xl md:text-3xl font-extrabold uppercase tracking-tight mt-2 text-nb-fg-muted">
-            Your Financial Year in Review
+            {isCurrentYear ? 'Your Financial Year — So Far' : 'Your Financial Year in Review'}
           </div>
           <div className="text-sm font-bold uppercase tracking-[0.2em] text-nb-fg-muted mt-4">
             powered by WOS
@@ -406,20 +464,20 @@ export default function YearReviewPage() {
               </div>
               <div className="grid grid-cols-4 md:grid-cols-6 gap-3">
                 {habitStats.monthGrid.map((m) => (
-                  <div key={m.month} className="text-center">
+                  <div key={m.month} className={`text-center ${m.hasData ? '' : 'opacity-30'}`}>
                     <div className="text-xs font-bold text-nb-fg-muted mb-1.5">{m.month}</div>
                     <div className="flex justify-center gap-1">
                       {[0, 1, 2, 3, 4].map((dot) => (
                         <div
                           key={dot}
                           className={`w-2.5 h-2.5 rounded-full border-2 border-nb-border ${
-                            m.rate > dot * 20 ? 'bg-nb-green' : 'bg-white'
+                            m.hasData && m.rate > dot * 20 ? 'bg-nb-green' : 'bg-white'
                           }`}
                         />
                       ))}
                     </div>
                     <div className="text-[0.6rem] font-bold text-nb-fg-muted mt-1">
-                      {m.count} done
+                      {m.hasData ? `${m.count} done` : '—'}
                     </div>
                   </div>
                 ))}
@@ -464,12 +522,14 @@ export default function YearReviewPage() {
                 </div>
                 <div
                   className={`font-mono text-lg font-extrabold ${
-                    netWorthData.changePct >= 0 ? 'text-nb-green' : 'text-nb-red'
+                    netWorthData.changePct === null ? 'text-nb-fg-muted' : netWorthData.changePct >= 0 ? 'text-nb-green' : 'text-nb-red'
                   }`}
                 >
-                  {netWorthData.changePct >= 0 ? '+' : ''}
-                  {netWorthData.changePct}%
+                  {netWorthData.changePct === null ? '—' : `${netWorthData.changePct >= 0 ? '+' : ''}${netWorthData.changePct}%`}
                 </div>
+                {netWorthData.changePct === null && (
+                  <div className="text-[0.6rem] text-nb-fg-muted mt-1">Butuh ≥2 catatan</div>
+                )}
               </div>
             </div>
             <div className="nb-card">
@@ -550,9 +610,10 @@ export default function YearReviewPage() {
             </div>
             <div className="space-y-4">
               {goalsData.list.map((g) => {
+                const progress = getGoalProgress(g)
                 const pct = Math.min(
                   100,
-                  Math.round((g.targetAmount > 0 ? g.savedAmount / g.targetAmount : 0) * 100),
+                  Math.round((g.targetAmount > 0 ? progress / g.targetAmount : 0) * 100),
                 )
                 const achieved = pct >= 100
                 return (
@@ -562,7 +623,7 @@ export default function YearReviewPage() {
                         {achieved ? '✅ ' : ''}{g.name}
                       </span>
                       <span className="font-mono text-sm font-extrabold">
-                        {formatCurrency(g.savedAmount)} / {formatCurrency(g.targetAmount)}
+                        {formatCurrency(progress)} / {formatCurrency(g.targetAmount)}
                       </span>
                     </div>
                     <div className="w-full h-4 border-3 border-nb-border bg-white">
@@ -621,12 +682,12 @@ export default function YearReviewPage() {
                   You tracked your finances
                 </div>
                 <div className="font-mono text-xl font-extrabold">
-                  {daysTracked} out of 365 days
+                  {daysTracked} out of {daysElapsedThisYear} days{isCurrentYear ? ' (so far)' : ''}
                 </div>
                 <div className="w-full h-3 border-3 border-nb-border bg-white mt-2">
                   <div
                     className="h-full bg-nb-blue"
-                    style={{ width: `${Math.min(100, Math.round((daysTracked / 365) * 100))}%` }}
+                    style={{ width: `${Math.min(100, Math.round((daysTracked / daysElapsedThisYear) * 100))}%` }}
                   />
                 </div>
               </div>
@@ -638,6 +699,8 @@ export default function YearReviewPage() {
           </div>
         </div>
       </section>
+      </>
+      )}
     </div>
   )
 }

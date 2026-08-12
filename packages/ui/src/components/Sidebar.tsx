@@ -5,8 +5,7 @@ const PAGES = [
   { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
   { id: 'finance', label: 'Finance', icon: '💸' },
   { id: 'calendar', label: 'Calendar', icon: '📅' },
-  { id: 'wealth', label: 'Wealth', icon: '📈' },
-  { id: 'networth', label: 'Net Worth', icon: '🏦' },
+  { id: 'wealth', label: 'Wealth', icon: '💰' },
   { id: 'subscription', label: 'Subscriptions', icon: '📋' },
   { id: 'habit', label: 'Habits', icon: '🔥' },
   { id: 'fire', label: 'FIRE', icon: '🚀' },
@@ -57,6 +56,18 @@ export default function Sidebar({ activePage, onNavigate, children }: Props) {
       </nav>
 
       {children}
+
+      <div className="px-2.5 mt-2">
+        <button
+          onClick={() => (window as any).__wosCommandPalette?.toggle?.()}
+          className="w-full flex items-center gap-3 px-3.5 py-2.5 font-bold text-xs uppercase tracking-wide border-2 border-dashed border-nb-border/50 hover:bg-black/10 transition-all cursor-pointer"
+          title="Buka command palette (⌘K / Ctrl+K)"
+        >
+          <span className="text-base w-6 text-center leading-none">🔍</span>
+          <span className="flex-1 text-left opacity-70">Cari cepat</span>
+          <span className="font-mono opacity-70">⌘K</span>
+        </button>
+      </div>
 
       <div className="px-5 pt-3.5 mt-3 border-t-3 border-nb-border">
         <button

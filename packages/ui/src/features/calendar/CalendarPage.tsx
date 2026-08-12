@@ -33,6 +33,54 @@ function toDateStr(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+// Mirrors advanceDate() in financeStore.ts (not exported there) so the calendar
+// can project every occurrence of a recurring item, not just its next one.
+function advanceDate(dateStr: string, frequency: string): string {
+  const p = dateStr.split('-')
+  const y = Number(p[0])
+  const m = Number(p[1])
+  const d = Number(p[2])
+
+  switch (frequency) {
+    case 'daily':
+      return toDateStr(new Date(y, m - 1, d + 1))
+    case 'weekly':
+      return toDateStr(new Date(y, m - 1, d + 7))
+    case 'monthly': {
+      const date = new Date(y, m - 1, d)
+      date.setMonth(date.getMonth() + 1)
+      if (date.getDate() !== d) date.setDate(0)
+      return toDateStr(date)
+    }
+    case 'yearly': {
+      const date = new Date(y + 1, m - 1, d)
+      // Handle leap year: Feb 29 → Feb 28 in non-leap years
+      if (m === 2 && d === 29 && date.getMonth() !== 1) date.setDate(28)
+      return toDateStr(date)
+    }
+    default:
+      return dateStr
+  }
+}
+
+// Every occurrence of `r` (starting from its nextDate) that lands inside
+// [rangeStart, rangeEnd]. Guarded so a bad frequency can't spin forever.
+function projectOccurrences(
+  r: { nextDate: string; frequency: string },
+  rangeStart: string,
+  rangeEnd: string,
+): string[] {
+  const out: string[] = []
+  let cur = r.nextDate
+  for (let i = 0; i < 2000 && cur <= rangeEnd; i++) {
+    if (cur >= rangeStart) out.push(cur)
+    const next = advanceDate(cur, r.frequency)
+    if (next <= cur) break // unknown frequency — no forward progress
+    cur = next
+  }
+  return out
+}
+
 function startOfMonthOffset(year: number, month: number): number {
   // getDay() returns 0=Sun, 1=Mon, ..., 6=Sat
   // We want 0=Mon (SEN), 6=Sun (MIN)
@@ -126,17 +174,20 @@ export default function CalendarPage() {
     return map
   }, [todos, monthStart, monthEnd])
 
-  // Recurring items with nextDate in this month
+  // Every projected occurrence of each active recurring item inside the viewed
+  // month — a weekly item shows ~4 times, and future months are populated too.
   const recurringByDate = useMemo(() => {
-    const map: Record<string, typeof recurring> = {}
+    const map: Record<string, { rec: (typeof recurring)[number]; projected: boolean }[]> = {}
     recurring
-      .filter((r) => r.active && r.nextDate >= monthStart && r.nextDate <= monthEnd)
+      .filter((r) => r.active)
       .forEach((r) => {
-        const entry = map[r.nextDate] = map[r.nextDate] || []
-        entry.push(r)
+        projectOccurrences(r, monthStart, monthEnd).forEach((date) => {
+          const entry = map[date] = map[date] || []
+          entry.push({ rec: r, projected: date > today })
+        })
       })
     return map
-  }, [recurring, monthStart, monthEnd])
+  }, [recurring, monthStart, monthEnd, today])
 
   // Month stats
   const monthIncome = useMemo(
@@ -148,6 +199,11 @@ export default function CalendarPage() {
     [txByDate],
   )
   const monthTodoCount = useMemo(() => Object.values(todosByDate).reduce((s, d) => s + d.length, 0), [todosByDate])
+
+  // Stats follow the month being VIEWED, so the labels must too — saying
+  // "Bulan Ini" after navigating to another month is just wrong.
+  const isCurrentMonth = monthStart.slice(0, 7) === today.slice(0, 7)
+  const viewLabel = isCurrentMonth ? 'Bulan Ini' : `${MONTH_NAMES[viewMonth - 1]} ${viewYear}`
 
   // Determine if a day string is a weekend (Sabtu=5, Minggu=6 in our offset)
   const isWeekend = (d: Date): boolean => {
@@ -214,19 +270,19 @@ export default function CalendarPage() {
       <div className="grid grid-cols-3 gap-4 mb-6">
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1">
-            Pemasukan Bulan Ini
+            Pemasukan {viewLabel}
           </div>
           <div className="text-nb-green font-mono text-lg font-extrabold">+{fmt(monthIncome)}</div>
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1">
-            Pengeluaran Bulan Ini
+            Pengeluaran {viewLabel}
           </div>
           <div className="text-nb-red font-mono text-lg font-extrabold">-{fmt(monthExpense)}</div>
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1">
-            Todo Bulan Ini
+            Todo {viewLabel}
           </div>
           <div className="text-nb-orange font-mono text-lg font-extrabold">{monthTodoCount} tugas</div>
         </NeubruCard>
@@ -301,9 +357,14 @@ export default function CalendarPage() {
                   </span>
                 )}
 
-                {/* Recurring indicator */}
+                {/* Recurring indicator — projected (not yet happened) occurrences
+                    are dashed + faded, past ones are solid */}
                 {recItems.length > 0 && (
-                  <span className="text-[10px] font-bold text-nb-purple leading-tight truncate">
+                  <span
+                    className={`text-[10px] font-bold text-nb-purple leading-tight truncate border-b-2 border-nb-purple ${
+                      recItems.every((r) => r.projected) ? 'border-dashed opacity-70' : ''
+                    }`}
+                  >
                     &#8635; {recItems.length}
                   </span>
                 )}
@@ -425,14 +486,24 @@ export default function CalendarPage() {
                     Recurring ({selectedRecurring.length})
                   </h4>
                   <div className="flex flex-col divide-y divide-nb-border/60 border-2 border-nb-border">
-                    {selectedRecurring.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between gap-2 px-3 py-2.5 bg-white">
+                    {selectedRecurring.map(({ rec: r, projected }) => (
+                      <div
+                        key={r.id}
+                        className={`flex items-center justify-between gap-2 px-3 py-2.5 bg-white ${projected ? 'opacity-70' : ''}`}
+                      >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <span className="text-lg shrink-0">
                             {r.type === 'income' ? '💰' : '💳'}
                           </span>
                           <div className="min-w-0">
-                            <div className="font-bold text-sm truncate">{r.name}</div>
+                            <div className="font-bold text-sm truncate">
+                              {r.name}
+                              {projected && (
+                                <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 border-2 border-dashed border-nb-purple text-nb-purple align-middle">
+                                  PROYEKSI
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[11px] text-nb-fg-muted">
                               {r.frequency} &#183; {r.category}
                             </div>

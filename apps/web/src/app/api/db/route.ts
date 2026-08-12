@@ -2,7 +2,7 @@ import { createClient } from '@libsql/client'
 import { z } from 'zod'
 import {
   hashPassword, verifyPassword, generateId, isoNow,
-  TransactionSchema, BudgetSchema, AssetSchema, NetWorthEntrySchema, VaultEntrySchema,
+  TransactionSchema, BudgetSchema, AssetSchema, LiabilitySchema, NetWorthEntrySchema, VaultEntrySchema,
   TodoSchema, AccountSchema, SavingsGoalSchema, RecurringTransactionSchema, SubscriptionSchema,
   HabitSchema, HabitLogSchema, NoteSchema,
 } from '@wos/shared'
@@ -15,14 +15,15 @@ const client = createClient({ url: TURSO_URL, authToken: TURSO_AUTH_TOKEN })
 const tables: Record<string, string[]> = {
   users: ['id', 'username', 'password_hash', 'vault_salt', 'vault_verify', 'session_token', 'created_at'],
   transactions: ['id', 'user_id', 'type', 'amount', 'category', 'description', 'date', 'account_id', 'flexibility', 'created_at'],
-  budgets: ['id', 'user_id', 'category', 'limit'],
-  assets: ['id', 'user_id', 'name', 'type', 'quantity', 'unit_price', 'buy_price', 'buy_date', 'notes', 'last_updated', 'created_at'],
+  budgets: ['id', 'user_id', 'category', 'limit', 'created_at', 'rollover_enabled'],
+  assets: ['id', 'user_id', 'name', 'type', 'quantity', 'unit_price', 'buy_price', 'buy_date', 'ticker', 'notes', 'last_updated', 'created_at'],
+  liabilities: ['id', 'user_id', 'name', 'type', 'amount', 'notes', 'created_at'],
   net_worth_entries: ['id', 'user_id', 'date', 'total_assets', 'total_liabilities', 'net_worth', 'cash', 'investments', 'property', 'other_assets', 'mortgage', 'loans', 'credit_cards', 'other_liabilities', 'created_at'],
   vault_entries: ['id', 'user_id', 'service', 'username', 'password_encrypted', 'password_iv', 'url', 'notes_encrypted', 'notes_iv', 'category', 'created_at'],
   todos: ['id', 'user_id', 'title', 'completed', 'priority', 'tags', 'due_date', 'notes', 'parent_id', 'order', 'created_at', 'updated_at'],
   user_settings: ['user_id', 'theme', 'currency', 'locale', 'auto_lock_minutes'],
   accounts: ['id', 'user_id', 'name', 'type', 'balance', 'opening_balance', 'created_at'],
-  savings_goals: ['id', 'user_id', 'name', 'target_amount', 'saved_amount', 'deadline', 'created_at'],
+  savings_goals: ['id', 'user_id', 'name', 'target_amount', 'saved_amount', 'account_id', 'deadline', 'created_at'],
   recurring_transactions: ['id', 'user_id', 'name', 'type', 'amount', 'category', 'frequency', 'next_date', 'active', 'created_at'],
   subscriptions: ['id', 'user_id', 'name', 'category', 'amount', 'frequency', 'next_billing', 'icon', 'active', 'notes', 'created_at'],
   habits: ['id', 'user_id', 'name', 'emoji', 'frequency', 'target_days', 'color', 'active', 'created_at'],
@@ -34,7 +35,7 @@ const tables: Record<string, string[]> = {
 // authenticated caller — the server, never the client, decides which rows
 // a request is allowed to touch.
 const USER_SCOPED_TABLES = new Set([
-  'transactions', 'budgets', 'assets', 'net_worth_entries', 'vault_entries',
+  'transactions', 'budgets', 'assets', 'liabilities', 'net_worth_entries', 'vault_entries',
   'todos', 'accounts', 'savings_goals', 'recurring_transactions',
   'subscriptions', 'habits', 'habit_logs', 'notes', 'user_settings',
 ])
@@ -55,6 +56,7 @@ const TABLE_SCHEMAS: Record<string, z.ZodTypeAny> = {
   transactions: TransactionSchema,
   budgets: BudgetSchema,
   assets: AssetSchema,
+  liabilities: LiabilitySchema,
   net_worth_entries: NetWorthEntrySchema,
   vault_entries: VaultEntrySchema,
   todos: TodoSchema,
@@ -164,9 +166,13 @@ async function ensureSchema() {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),
       category TEXT NOT NULL,
-      "limit" REAL NOT NULL
+      "limit" REAL NOT NULL,
+      created_at TEXT NOT NULL DEFAULT '',
+      rollover_enabled INTEGER NOT NULL DEFAULT 0
     )
   `)
+  try { await client.execute(`ALTER TABLE budgets ADD COLUMN created_at TEXT NOT NULL DEFAULT ''`) } catch {}
+  try { await client.execute(`ALTER TABLE budgets ADD COLUMN rollover_enabled INTEGER NOT NULL DEFAULT 0`) } catch {}
   await client.execute(`
     CREATE TABLE IF NOT EXISTS assets (
       id TEXT PRIMARY KEY,
@@ -177,6 +183,7 @@ async function ensureSchema() {
       unit_price REAL NOT NULL,
       buy_price REAL,
       buy_date TEXT,
+      ticker TEXT,
       notes TEXT NOT NULL DEFAULT '',
       last_updated TEXT NOT NULL,
       created_at TEXT NOT NULL
@@ -184,6 +191,18 @@ async function ensureSchema() {
   `)
   try { await client.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
   try { await client.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
+  try { await client.execute(`ALTER TABLE assets ADD COLUMN ticker TEXT`) } catch {}
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS liabilities (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )
+  `)
   await client.execute(`
     CREATE TABLE IF NOT EXISTS net_worth_entries (
       id TEXT PRIMARY KEY,
@@ -265,11 +284,13 @@ async function ensureSchema() {
       name TEXT NOT NULL,
       target_amount REAL NOT NULL,
       saved_amount REAL NOT NULL DEFAULT 0,
+      account_id TEXT,
       deadline TEXT,
       created_at TEXT NOT NULL
     )
   `)
   try { await client.execute(`ALTER TABLE savings_goals ADD COLUMN deadline TEXT`) } catch {}
+  try { await client.execute(`ALTER TABLE savings_goals ADD COLUMN account_id TEXT`) } catch {}
   await client.execute(`
     CREATE TABLE IF NOT EXISTS recurring_transactions (
       id TEXT PRIMARY KEY,
@@ -348,6 +369,7 @@ async function ensureSchema() {
     ['idx_transactions_user_date', 'transactions', 'user_id, date'],
     ['idx_budgets_user', 'budgets', 'user_id'],
     ['idx_assets_user', 'assets', 'user_id'],
+    ['idx_liabilities_user', 'liabilities', 'user_id'],
     ['idx_net_worth_entries_user', 'net_worth_entries', 'user_id'],
     ['idx_vault_entries_user', 'vault_entries', 'user_id'],
     ['idx_todos_user', 'todos', 'user_id'],

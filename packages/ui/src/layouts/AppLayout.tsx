@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import Sidebar, { type PageId } from '../components/Sidebar'
-import { Toaster } from 'sonner'
+import { Toaster, toast } from 'sonner'
 import LoadingSpinner from '../components/LoadingSpinner'
 import PageTransition from '../components/PageTransition'
 import ErrorBoundary from '../components/ErrorBoundary'
@@ -8,7 +8,11 @@ import CommandPalette from '../components/CommandPalette'
 import WeeklyReflection from '../components/WeeklyReflection'
 import { useVaultStore } from '../stores/vaultStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useAchievementStore } from '../stores/achievementStore'
+import { useAchievementStore, ACHIEVEMENTS } from '../stores/achievementStore'
+import { useLevelStore } from '../stores/levelStore'
+import { useAuthStore } from '../stores/authStore'
+import { useNotesStore } from '../stores/notesStore'
+import { useSubscriptionStore } from '../stores/subscriptionStore'
 
 interface Props {
   children?: ReactNode
@@ -19,7 +23,6 @@ const pageComponents: Record<PageId, () => Promise<{ default: () => React.JSX.El
   finance: () => import('../features/finance/FinancePage'),
   calendar: () => import('../features/calendar/CalendarPage'),
   wealth: () => import('../features/wealth/WealthPage'),
-  networth: () => import('../features/networth/NetWorthPage'),
   subscription: () => import('../features/subscription/SubscriptionPage'),
   habit: () => import('../features/habit/HabitPage'),
   fire: () => import('../features/fire/FirePage'),
@@ -58,7 +61,26 @@ export default function AppLayout({ children }: Props) {
     setLoading(false)
     // Cheap + synchronous — re-check unlock conditions against whatever
     // data every store currently holds each time the user changes page.
-    try { useAchievementStore.getState().checkAll() } catch {}
+    try {
+      for (const id of useAchievementStore.getState().checkAll()) {
+        const a = ACHIEVEMENTS.find((x) => x.id === id)
+        if (a) toast.success(`🏅 Achievement unlocked: ${a.name}`)
+      }
+    } catch {}
+    // Daily quests are derived from real data rather than claimed, so they
+    // need the same periodic re-evaluation — otherwise a quest condition met
+    // on, say, the Finance page wouldn't register until Skill Tree is opened.
+    try {
+      const userId = useAuthStore.getState().userId
+      if (userId) {
+        const level = useLevelStore.getState()
+        level.generateDailyQuests(userId)
+        for (const id of level.evaluateQuests()) {
+          const q = useLevelStore.getState().dailyQuests.find((x) => x.id === id)
+          if (q) toast.success(`✅ Quest selesai: ${q.desc} · +${q.xp} XP`)
+        }
+      }
+    } catch {}
   }, [])
 
   // Load dashboard by default
@@ -67,6 +89,25 @@ export default function AppLayout({ children }: Props) {
       navigate('dashboard')
     }
   }, [PageComp, loading, navigate])
+
+  // Notes are read by several places that never fetched them themselves
+  // (Finance/Todo link indicators, Dashboard's Pet/OnThisDay) — fetch once
+  // here instead of duplicating the fetch per-consumer.
+  useEffect(() => {
+    const userId = useAuthStore.getState().userId
+    if (userId) useNotesStore.getState().fetchAll(userId)
+  }, [])
+
+  // Subscriptions whose billing date has passed become real expense
+  // transactions here, once per app session — doing it at the layout level
+  // (instead of on SubscriptionPage) means it runs no matter which page the
+  // user opens first, same as recurring transactions should.
+  useEffect(() => {
+    const userId = useAuthStore.getState().userId
+    if (!userId) return
+    const subs = useSubscriptionStore.getState()
+    subs.fetchAll(userId).then(() => subs.processSubscriptions(userId)).catch(() => {})
+  }, [])
 
   // ── Cmd+K / Ctrl+K opens the command palette ──
   useEffect(() => {

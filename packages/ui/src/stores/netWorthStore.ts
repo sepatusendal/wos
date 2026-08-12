@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { NetWorthEntry } from '@wos/shared'
-import { generateId, isoNow } from '@wos/shared'
+import { generateId, isoNow, todayStr } from '@wos/shared'
 import type { DatabaseAdapter } from '@wos/db'
 import { eq, desc } from '@wos/db'
 
@@ -12,6 +12,15 @@ interface NetWorthState {
   fetchAll: (userId: string) => Promise<void>
   addEntry: (userId: string, e: Omit<NetWorthEntry, 'id' | 'createdAt'>) => Promise<void>
   deleteEntry: (id: string) => Promise<void>
+  /**
+   * Net worth history used to be a manually-typed snapshot — a plain number
+   * disconnected from real holdings, the same class of bug as Savings
+   * Goal's `savedAmount`. Now it's a once-a-day auto-snapshot of the live
+   * computed value from Wealth (assets) + Liabilities; call this on
+   * Wealth-page mount with the already-computed breakdown. No-ops if
+   * today's snapshot already exists.
+   */
+  ensureTodaySnapshot: (userId: string, breakdown: Omit<NetWorthEntry, 'id' | 'createdAt' | 'date'>) => Promise<void>
 }
 
 export const useNetWorthStore = create<NetWorthState>((set, get) => ({
@@ -50,6 +59,13 @@ export const useNetWorthStore = create<NetWorthState>((set, get) => ({
     if (!adapter) return
     await adapter.db.delete('net_worth_entries').where(eq('id', id))
     set((s) => ({ entries: s.entries.filter((x) => x.id !== id) }))
+  },
+
+  ensureTodaySnapshot: async (userId, breakdown) => {
+    const { entries } = get()
+    const today = todayStr()
+    if (entries.some((e) => e.date === today)) return
+    await get().addEntry(userId, { ...breakdown, date: today })
   },
 }))
 

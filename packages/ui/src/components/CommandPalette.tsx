@@ -3,6 +3,8 @@ import { toast } from 'sonner'
 import { useVaultStore } from '../stores/vaultStore'
 import { useFinanceStore } from '../stores/financeStore'
 import { useAuthStore } from '../stores/authStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { useFormatCurrency } from '../stores/useFormatCurrency'
 import { todayStr } from '@wos/shared'
 import type { PageId } from './Sidebar'
 
@@ -12,8 +14,7 @@ const PAGES: { id: PageId; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
   { id: 'finance', label: 'Finance', icon: '💸' },
   { id: 'calendar', label: 'Calendar', icon: '📅' },
-  { id: 'wealth', label: 'Wealth', icon: '📈' },
-  { id: 'networth', label: 'Net Worth', icon: '🏦' },
+  { id: 'wealth', label: 'Wealth', icon: '💰' },
   { id: 'subscription', label: 'Subscriptions', icon: '📋' },
   { id: 'habit', label: 'Habits', icon: '🔥' },
   { id: 'vault', label: 'Vault', icon: '🔐' },
@@ -69,7 +70,8 @@ function saveRecent(list: RecentCommand[]) {
  *   150k  → 150000
  *   1jt   → 1000000
  *   2.5jt → 2500000
- *   5m    → 5000000000
+ *   5m    → 5000000 (m = juta, sama seperti di kalkulator)
+ *   5milyar → 5000000000
  */
 function parseAmount(raw: string): number | null {
   // Preserve decimal dots (e.g. 2.5jt → 2.5), strip comma thousands
@@ -92,8 +94,8 @@ function parseAmount(raw: string): number | null {
       return num * 1_000
     case 'jt':
     case 'juta':
-      return num * 1_000_000
     case 'm':
+      return num * 1_000_000
     case 'milyar':
     case 'miliar':
       return num * 1_000_000_000
@@ -133,19 +135,6 @@ function evalCalc(expr: string): { result: number } | { error: string } {
   }
 }
 
-// ── IDR formatter ──────────────────────────────────────────
-
-const idrFormatter = new Intl.NumberFormat('id-ID', {
-  style: 'currency',
-  currency: 'IDR',
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 0,
-})
-
-function formatRupiah(n: number): string {
-  return idrFormatter.format(n)
-}
-
 // ── Props ───────────────────────────────────────────────────
 
 interface Props {
@@ -161,6 +150,16 @@ export default function CommandPalette({ onNavigate }: Props) {
   const [recentCommands, setRecentCommands] = useState<RecentCommand[]>(loadRecent)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  // Money is formatted with the user's currency/locale settings, not hardcoded IDR
+  const formatMoney = useFormatCurrency()
+  const locale = useSettingsStore((s) => s.settings?.locale) ?? 'id-ID'
+  // Plain number formatting (thousand separators, no currency symbol) — used for
+  // calculator results, which aren't necessarily money.
+  const formatNumber = useCallback(
+    (n: number) => n.toLocaleString(locale, { maximumFractionDigits: 10 }),
+    [locale],
+  )
 
   // ── Execute helpers (defined before useMemo that references them) ──
 
@@ -203,7 +202,7 @@ export default function CommandPalette({ onNavigate }: Props) {
   }, [addToRecent, closePalette])
 
   const executeAdd = useCallback(
-    (amount: number, category: string) => {
+    (amount: number, category: string, type: 'expense' | 'income' = 'expense') => {
       const userId = useAuthStore.getState().userId
       if (!userId) {
         toast.error('Harus login terlebih dahulu')
@@ -212,7 +211,7 @@ export default function CommandPalette({ onNavigate }: Props) {
       }
       const store = useFinanceStore.getState()
       store.addTransaction(userId, {
-        type: 'expense',
+        type,
         amount,
         category,
         description: '',
@@ -220,19 +219,28 @@ export default function CommandPalette({ onNavigate }: Props) {
         accountId: null,
         flexibility: 'flexible',
       })
-      const amountStr = formatRupiah(amount)
-      addToRecent(`add ${amount} ${category}`, `Transaksi: ${amountStr} · ${category}`)
-      toast.success(`Transaksi dibuat: ${amountStr} · ${category}`)
+      const amountStr = formatMoney(amount)
+      const kind = type === 'income' ? 'Pemasukan' : 'Pengeluaran'
+      addToRecent(
+        `add ${type === 'income' ? '+' : ''}${amount} ${category}`,
+        `${kind}: ${amountStr} · ${category}`,
+      )
+      toast.success(`${kind} dibuat: ${amountStr} · ${category}`)
       closePalette()
     },
-    [addToRecent, closePalette],
+    [addToRecent, closePalette, formatMoney],
   )
 
-  const executeJournal = useCallback(() => {
-    addToRecent('journal', 'Buka journal')
-    toast.info('Fitur journal akan segera hadir!')
-    closePalette()
-  }, [addToRecent, closePalette])
+  const executeCopy = useCallback(
+    (value: string) => {
+      navigator.clipboard
+        .writeText(value)
+        .then(() => toast.success(`Disalin: ${value}`))
+        .catch(() => toast.error('Gagal menyalin hasil'))
+      closePalette()
+    },
+    [closePalette],
+  )
 
   const setQueryAndFocus = useCallback((val: string) => {
     setQuery(val)
@@ -245,18 +253,30 @@ export default function CommandPalette({ onNavigate }: Props) {
     const q = query.trim()
     if (!q) return { mode: 'all' as const }
 
-    // Match "add <amount> <category>"
+    // Match "add <amount> <category>" — a leading "+" on the amount
+    // (or the "income" keyword) makes it a pemasukan instead of pengeluaran.
     const addMatch = q.match(/^add\s+(.+)/i)
     if (addMatch) {
-      const rest = addMatch[1]!.trim()
+      let rest = addMatch[1]!.trim()
+      let txType: 'expense' | 'income' = 'expense'
+
+      const incomeKeyword = rest.match(/^(income|masuk)\s+(.+)/i)
+      if (incomeKeyword) {
+        txType = 'income'
+        rest = incomeKeyword[2]!.trim()
+      } else if (rest.startsWith('+')) {
+        txType = 'income'
+        rest = rest.slice(1).trim()
+      }
+
       const parts = rest.split(/\s+/)
       if (parts.length >= 1) {
         const amountRaw = parts[0]!
         const amount = parseAmount(amountRaw)
         const category = parts.slice(1).join(' ') || null
-        return { mode: 'add' as const, amountRaw, amount, category }
+        return { mode: 'add' as const, amountRaw, amount, category, txType }
       }
-      return { mode: 'add' as const, amountRaw: rest, amount: null, category: null }
+      return { mode: 'add' as const, amountRaw: rest, amount: null, category: null, txType }
     }
 
     // Match "go <page>"
@@ -276,12 +296,6 @@ export default function CommandPalette({ onNavigate }: Props) {
 
     // Match "lock"
     if (/^lock/i.test(q)) return { mode: 'lock' as const }
-
-    // Match "journal"
-    const journalMatch = q.match(/^journal\s*(.*)/i)
-    if (journalMatch) {
-      return { mode: 'journal' as const, sub: journalMatch[1]!.trim() || null }
-    }
 
     // Fuzzy fallback
     return { mode: 'search' as const }
@@ -314,7 +328,7 @@ export default function CommandPalette({ onNavigate }: Props) {
             id: 'cmd-add',
             type: 'info',
             label: 'Tambah transaksi cepat',
-            subtitle: 'add 50rb makan',
+            subtitle: 'add 50rb makan  ·  add +5jt gaji (pemasukan)',
             icon: '💰',
             action: () => setQueryAndFocus('add '),
           },
@@ -342,12 +356,12 @@ export default function CommandPalette({ onNavigate }: Props) {
             action: () => executeLock(),
           },
           {
-            id: 'cmd-journal',
-            type: 'info',
-            label: 'Buka journal',
-            subtitle: 'journal today',
-            icon: '📓',
-            action: () => executeJournal(),
+            id: 'cmd-notes',
+            type: 'navigate',
+            label: 'Buka Notes',
+            subtitle: 'go notes',
+            icon: '📝',
+            action: () => executeGo('notes'),
           },
         )
 
@@ -356,24 +370,26 @@ export default function CommandPalette({ onNavigate }: Props) {
 
       case 'add': {
         const results: CommandResult[] = []
-        const { amount, category } = parsed
+        const { amount, category, txType } = parsed
+        const isIncome = txType === 'income'
+        const kind = isIncome ? 'pemasukan' : 'pengeluaran'
 
         if (amount !== null && category) {
-          const amountStr = formatRupiah(amount)
+          const amountStr = formatMoney(amount)
           results.push({
             id: 'add-confirm',
             type: 'transaction',
-            label: `Buat transaksi: ${amountStr}`,
+            label: `Buat ${kind}: ${amountStr}`,
             subtitle: `Kategori: ${category}`,
-            icon: '💸',
-            action: () => executeAdd(amount, category),
+            icon: isIncome ? '💵' : '💸',
+            action: () => executeAdd(amount, category, txType),
           })
         } else if (amount !== null) {
-          const amountStr = formatRupiah(amount)
+          const amountStr = formatMoney(amount)
           results.push({
             id: 'add-amount',
             type: 'info',
-            label: `Jumlah: ${amountStr}`,
+            label: `Jumlah: ${amountStr} (${kind})`,
             subtitle: 'Tambah kategori setelah jumlah, contoh: add 50rb makan',
             icon: '💰',
             action: () => {},
@@ -383,7 +399,7 @@ export default function CommandPalette({ onNavigate }: Props) {
             id: 'add-hint',
             type: 'info',
             label: 'Format: add [jumlah] [kategori]',
-            subtitle: 'Contoh: add 50rb Makan Siang',
+            subtitle: 'Pengeluaran: add 50rb Makan Siang · Pemasukan: add +5jt Gaji',
             icon: '❓',
             action: () => {},
           })
@@ -431,15 +447,15 @@ export default function CommandPalette({ onNavigate }: Props) {
       case 'calc': {
         const { expr, calcResult } = parsed
         if ('result' in calcResult) {
-          const formatted = formatRupiah(calcResult.result)
+          const formatted = formatNumber(calcResult.result)
           return [
             {
               id: 'calc-result',
               type: 'calculator',
               label: `${expr} = ${formatted}`,
-              subtitle: `Hasil: ${calcResult.result.toLocaleString('id-ID')}`,
+              subtitle: `Enter untuk salin · sebagai uang: ${formatMoney(calcResult.result)}`,
               icon: '🔢',
-              action: () => {},
+              action: () => executeCopy(String(calcResult.result)),
             },
           ]
         }
@@ -464,19 +480,6 @@ export default function CommandPalette({ onNavigate }: Props) {
             subtitle: 'Semua data vault akan terkunci',
             icon: '🔒',
             action: () => executeLock(),
-          },
-        ]
-      }
-
-      case 'journal': {
-        return [
-          {
-            id: 'journal-action',
-            type: 'action',
-            label: parsed.sub ? `Buka journal: ${parsed.sub}` : 'Buka journal',
-            subtitle: 'Fitur journal akan segera hadir',
-            icon: '📓',
-            action: () => executeJournal(),
           },
         ]
       }
@@ -506,13 +509,17 @@ export default function CommandPalette({ onNavigate }: Props) {
           })
         }
 
-        if ('journal'.includes(q) || 'catatan'.includes(q)) {
+        // "journal"/"jurnal"/"catatan" are aliases for the real Notes page
+        if (
+          !results.some((r) => r.id === 'go-notes') &&
+          ('journal'.includes(q) || 'jurnal'.includes(q) || 'catatan'.includes(q))
+        ) {
           results.push({
-            id: 'journal-action',
-            type: 'action',
-            label: 'Buka journal',
-            icon: '📓',
-            action: () => executeJournal(),
+            id: 'go-notes',
+            type: 'navigate',
+            label: 'Go to Notes',
+            icon: '📝',
+            action: () => executeGo('notes'),
           })
         }
 
@@ -521,8 +528,20 @@ export default function CommandPalette({ onNavigate }: Props) {
             id: 'add-hint',
             type: 'info',
             label: 'Tambah transaksi: add [jumlah] [kategori]',
+            subtitle: 'Pakai + di depan jumlah untuk pemasukan, contoh: add +5jt gaji',
             icon: '💰',
             action: () => setQueryAndFocus('add '),
+          })
+        }
+
+        if ('income'.includes(q) || 'pemasukan'.includes(q) || 'gaji'.includes(q)) {
+          results.push({
+            id: 'income-hint',
+            type: 'info',
+            label: 'Tambah pemasukan: add +[jumlah] [kategori]',
+            subtitle: 'Contoh: add +5jt Gaji',
+            icon: '💵',
+            action: () => setQueryAndFocus('add +'),
           })
         }
 
@@ -551,7 +570,7 @@ export default function CommandPalette({ onNavigate }: Props) {
         return results
       }
     }
-  }, [parsed, query, recentCommands, executeGo, executeLock, executeAdd, executeJournal, setQueryAndFocus])
+  }, [parsed, query, recentCommands, executeGo, executeLock, executeAdd, executeCopy, setQueryAndFocus, formatMoney, formatNumber])
 
   const executeSelected = useCallback(() => {
     if (results.length === 0) return
@@ -673,7 +692,7 @@ export default function CommandPalette({ onNavigate }: Props) {
                 Hasil kalkulasi
               </span>
               <div className="font-mono font-bold text-lg text-nb-fg mt-0.5">
-                {formatRupiah(parsed.calcResult.result)}
+                {formatNumber(parsed.calcResult.result)}
               </div>
             </div>
           )}
@@ -691,10 +710,7 @@ export default function CommandPalette({ onNavigate }: Props) {
               results.map((item, i) => (
                 <button
                   key={item.id}
-                  onClick={() => {
-                    if (item.type === 'calculator') return
-                    item.action()
-                  }}
+                  onClick={() => item.action()}
                   className={`w-full flex items-center gap-3 px-4 py-3 border-b-2 border-nb-border/20 text-left font-bold text-sm uppercase tracking-wide transition-colors cursor-pointer ${
                     i === selectedIndex
                       ? 'bg-nb-yellow/20'
@@ -721,6 +737,9 @@ export default function CommandPalette({ onNavigate }: Props) {
                   )}
                   {item.type === 'action' && (
                     <span className="text-nb-blue text-xs font-mono font-bold">RUN</span>
+                  )}
+                  {item.type === 'calculator' && (
+                    <span className="text-nb-fg-muted text-xs font-mono font-bold">COPY</span>
                   )}
                 </button>
               ))

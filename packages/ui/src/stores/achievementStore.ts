@@ -26,20 +26,65 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'sub_tracker', name: 'Subscription Aware', desc: 'Track subscription pertama', icon: '📋' },
 ]
 
-const STORAGE_KEY = 'wos_achievements'
+// Namespaced per user, mirroring levelStore — a single shared
+// `wos_achievements` key meant two accounts on the same browser saw each
+// other's badges.
+const STORAGE_PREFIX = 'wos_achievements_'
+// Pre-namespacing key. Kept only so existing progress can be migrated once.
+const LEGACY_STORAGE_KEY = 'wos_achievements'
+function storageKeyFor(userId: string): string {
+  return `${STORAGE_PREFIX}${userId}`
+}
 
-function loadUnlocked(): string[] {
+interface PersistedAchievements {
+  unlocked: string[]
+  /** achievementId → ISO timestamp of the unlock. Drives "new achievement" windows (e.g. the pet's hero mood). */
+  unlockedAt: Record<string, string>
+}
+
+function parsePersisted(raw: string | null): PersistedAchievements {
+  if (!raw) return { unlocked: [], unlockedAt: {} }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : []
+    const parsed = JSON.parse(raw)
+    // Pre-timestamp format was a bare array of ids.
+    if (Array.isArray(parsed)) return { unlocked: parsed, unlockedAt: {} }
+    return {
+      unlocked: Array.isArray(parsed.unlocked) ? parsed.unlocked : [],
+      unlockedAt: parsed.unlockedAt ?? {},
+    }
   } catch {
-    return []
+    return { unlocked: [], unlockedAt: {} }
   }
 }
 
-function saveUnlocked(ids: string[]) {
+function loadUnlocked(userId: string | null): PersistedAchievements {
+  if (!userId) return { unlocked: [], unlockedAt: {} }
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids))
+    return parsePersisted(localStorage.getItem(storageKeyFor(userId)))
+  } catch {
+    return { unlocked: [], unlockedAt: {} }
+  }
+}
+
+function saveUnlocked(userId: string | null, data: PersistedAchievements) {
+  if (!userId) return
+  try {
+    localStorage.setItem(storageKeyFor(userId), JSON.stringify(data))
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+// One-time migration of the pre-namespacing shared key to the first user who
+// logs in after the change, then drop it so a second account can't inherit
+// the same blob. Same approach as levelStore.
+function migrateLegacyKey(userId: string) {
+  try {
+    if (localStorage.getItem(storageKeyFor(userId)) !== null) return
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (!legacy) return
+    localStorage.setItem(storageKeyFor(userId), legacy)
+    localStorage.removeItem(LEGACY_STORAGE_KEY)
   } catch {
     // localStorage may be unavailable
   }
@@ -84,29 +129,50 @@ function computeTxStreak(transactions: { date: string }[]): number {
 }
 
 interface AchievementState {
+  currentUserId: string | null
   unlocked: string[]
+  unlockedAt: Record<string, string>
   /** no-op for API consistency with other stores */
   setAdapter: (_adapter: unknown) => void
+  setUser: (userId: string | null) => void
   load: () => void
-  checkAll: () => void
+  /** Re-check every unlock condition. Returns the ids that unlocked on this pass (empty when nothing is new). */
+  checkAll: () => string[]
   isUnlocked: (id: string) => boolean
   getLastUnlocked: () => Achievement | null
+  /** ISO timestamp of the most recent unlock, or null if none is recorded. */
+  getLastUnlockedAt: () => string | null
   getAllUnlocked: () => Achievement[]
 }
 
 export const useAchievementStore = create<AchievementState>((set, get) => ({
-  unlocked: loadUnlocked(),
+  currentUserId: null,
+  unlocked: [],
+  unlockedAt: {},
 
   setAdapter: (_adapter) => {
     // no-op — achievements use localStorage only
   },
 
+  setUser: (userId) => {
+    if (get().currentUserId === userId) return
+    if (!userId) {
+      set({ currentUserId: null, unlocked: [], unlockedAt: {} })
+      return
+    }
+    migrateLegacyKey(userId)
+    const initial = loadUnlocked(userId)
+    set({ currentUserId: userId, unlocked: initial.unlocked, unlockedAt: initial.unlockedAt })
+  },
+
   load: () => {
-    set({ unlocked: loadUnlocked() })
+    const initial = loadUnlocked(get().currentUserId)
+    set({ unlocked: initial.unlocked, unlockedAt: initial.unlockedAt })
   },
 
   checkAll: () => {
     const { unlocked } = get()
+    const before = new Set(unlocked)
     let changed = false
     const now = [...unlocked]
 
@@ -147,8 +213,12 @@ export const useAchievementStore = create<AchievementState>((set, get) => ({
     }
 
     // 4. savings_25, savings_50, savings_100
+    // Progress goes through getGoalProgress so a goal linked to an account
+    // is measured against that account's live balance, not the stale
+    // hand-typed `savedAmount` (which a linked goal never updates).
     for (const g of savingsGoals) {
-      const pct = g.targetAmount > 0 ? (g.savedAmount / g.targetAmount) * 100 : 0
+      const saved = finance.getGoalProgress(g)
+      const pct = g.targetAmount > 0 ? (saved / g.targetAmount) * 100 : 0
       if (!now.includes('savings_25') && pct >= 25) {
         now.push('savings_25')
         changed = true
@@ -174,18 +244,22 @@ export const useAchievementStore = create<AchievementState>((set, get) => ({
       }
     }
 
-    // 6. budget_perfect — all budgets on track (< 80% spent this month)
-    if (!now.includes('budget_perfect') && budgets.length > 0) {
+    // 6. budget_perfect — genuinely staying under budget, not "nothing spent
+    // yet". The old check unlocked the moment a single budget was created
+    // (0 spending trivially reads as 0% < 80%). Now it needs at least three
+    // budgets, each with real spending logged against it this month, and all
+    // of them still under 80%.
+    if (!now.includes('budget_perfect') && budgets.length >= 3) {
       const thisMonth = dateStr(new Date()).slice(0, 7)
       const allOnTrack = budgets.every((b) => {
-        const spent = tx
-          .filter(
-            (t) =>
-              t.type === 'expense' &&
-              t.category === b.category &&
-              t.date.startsWith(thisMonth),
-          )
-          .reduce((s, t) => s + t.amount, 0)
+        const monthTx = tx.filter(
+          (t) =>
+            t.type === 'expense' &&
+            t.category === b.category &&
+            t.date.startsWith(thisMonth),
+        )
+        if (monthTx.length === 0) return false // untouched budget proves nothing
+        const spent = monthTx.reduce((s, t) => s + t.amount, 0)
         return b.limit > 0 && (spent / b.limit) * 100 < 80
       })
       if (allOnTrack) {
@@ -213,10 +287,16 @@ export const useAchievementStore = create<AchievementState>((set, get) => ({
       changed = true
     }
 
-    if (changed) {
-      set({ unlocked: now })
-      saveUnlocked(now)
-    }
+    if (!changed) return []
+
+    const newlyUnlocked = now.filter((id) => !before.has(id))
+    const stamp = new Date().toISOString()
+    const unlockedAt = { ...get().unlockedAt }
+    for (const id of newlyUnlocked) unlockedAt[id] = stamp
+
+    set({ unlocked: now, unlockedAt })
+    saveUnlocked(get().currentUserId, { unlocked: now, unlockedAt })
+    return newlyUnlocked
   },
 
   isUnlocked: (id) => get().unlocked.includes(id),
@@ -226,6 +306,12 @@ export const useAchievementStore = create<AchievementState>((set, get) => ({
     if (unlocked.length === 0) return null
     const lastId = unlocked[unlocked.length - 1]
     return ACHIEVEMENTS.find((a) => a.id === lastId) || null
+  },
+
+  getLastUnlockedAt: () => {
+    const stamps = Object.values(get().unlockedAt)
+    if (stamps.length === 0) return null
+    return stamps.reduce((a, b) => (a > b ? a : b))
   },
 
   getAllUnlocked: () => {

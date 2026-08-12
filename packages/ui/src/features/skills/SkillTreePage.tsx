@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { NeubruCard } from '../../components'
 import { toast } from 'sonner'
-import { useLevelStore } from '../../stores/levelStore'
+import { useLevelStore, evaluateQuestProgress } from '../../stores/levelStore'
 import { useAuthStore } from '../../stores/authStore'
 
 interface SkillNode {
@@ -39,46 +39,58 @@ interface SkillTreeDefinition {
   icon: string
   title: string
   color: string
+  /** What this level currently is. Cosmetic unless `note` says otherwise. */
   bonusLabel: (level: number) => string
   unlockLabel: (level: number) => string | null
+  note: string
 }
 
+/** Cosmetic rank title — no mechanical effect anywhere in the app. */
+function rankTitle(base: string, level: number): string {
+  if (level >= 10) return `${base} Master`
+  if (level >= 7) return `${base} Expert`
+  if (level >= 4) return `${base} Adept`
+  if (level >= 1) return `${base} Novice`
+  return `${base} —`
+}
+
+// Honesty pass: this tree used to advertise a "% savings bonus", a "loan
+// calculator"/"FIRE projection"/"weekly reflection"/"journal templates"
+// unlock and a "notes search boost". None of those were real — the savings
+// bonus fed into no calculation, and Tools › Loan, FIRE, Weekly Reflection
+// and Notes search have always been available to everyone at every level.
+// The claims are gone; what's left is either a plain rank title or, for
+// Vitality, an effect that genuinely runs (habitStore's streak freeze).
 const TREE_DEFS: SkillTreeDefinition[] = [
   {
     id: 'wealth',
     icon: '💰',
     title: 'Wealth',
     color: '#22c55e',
-    bonusLabel: (level) => `${level}% savings bonus`,
-    unlockLabel: (level) => {
-      if (level >= 10) return 'FIRE projection unlocked'
-      if (level >= 5) return 'Loan calculator unlocked'
-      return null
-    },
+    bonusLabel: (level) => rankTitle('Wealth', level),
+    unlockLabel: () => null,
+    note: 'Badge progresi — belum ada efek mekanis pada perhitungan.',
   },
   {
     id: 'vitality',
     icon: '💪',
     title: 'Vitality',
     color: '#ff8a00',
-    bonusLabel: (level) => `${Math.floor(level / 3)} streak freeze(s)`,
-    unlockLabel: (level) => {
-      if (level >= 5) return 'Extra daily quest unlocked'
-      return null
-    },
+    bonusLabel: (level) => `${Math.floor(level / 3)} streak freeze / bulan`,
+    unlockLabel: (level) =>
+      level >= 3
+        ? 'Aktif: hari habit yang terlewat bisa ditahan biar streak nggak putus'
+        : 'Streak freeze pertama di level 3',
+    note: 'Satu-satunya cabang yang punya efek nyata (lihat halaman Habits).',
   },
   {
     id: 'wisdom',
     icon: '🧠',
     title: 'Wisdom',
     color: '#8b5cf6',
-    bonusLabel: (level) => `Wisdom level ${level}`,
-    unlockLabel: (level) => {
-      if (level >= 10) return 'Weekly reflection unlocked'
-      if (level >= 7) return 'Notes search boost'
-      if (level >= 3) return 'Journal templates unlocked'
-      return null
-    },
+    bonusLabel: (level) => rankTitle('Wisdom', level),
+    unlockLabel: () => null,
+    note: 'Badge progresi — belum ada efek mekanis pada perhitungan.',
   },
 ]
 
@@ -171,6 +183,9 @@ export default function SkillTreePage() {
                     {tree.unlockLabel(skills[tree.id])}
                   </span>
                 )}
+                <span className="block mt-1 text-[10px] text-nb-fg-muted normal-case font-medium tracking-normal">
+                  {tree.note}
+                </span>
               </div>
 
               {/* Node tree */}
@@ -246,7 +261,7 @@ export default function SkillTreePage() {
 }
 
 function DailyQuestsSection() {
-  const { dailyQuests, dailyQuestDate, completeQuest, generateDailyQuests } = useLevelStore()
+  const { dailyQuests, dailyQuestDate, evaluateQuests, generateDailyQuests } = useLevelStore()
   const today = new Date().toISOString().slice(0, 10)
 
   // Reset quests if it's a new day
@@ -256,6 +271,17 @@ function DailyQuestsSection() {
       generateDailyQuests(userId)
     }
   }, [dailyQuestDate, today, generateDailyQuests])
+
+  // Quests are derived, not claimed: re-check the real data on mount and
+  // whenever the quest set changes, so anything already satisfied lands as
+  // done (and pays out once) without the user pressing anything.
+  useEffect(() => {
+    const newlyDone = evaluateQuests()
+    for (const id of newlyDone) {
+      const q = useLevelStore.getState().dailyQuests.find((x) => x.id === id)
+      if (q) toast.success(`Quest selesai: ${q.desc} · +${q.xp} XP`)
+    }
+  }, [dailyQuests.length, dailyQuestDate, evaluateQuests])
 
   const doneCount = dailyQuests.filter((q) => q.done).length
   const totalCount = dailyQuests.length
@@ -269,8 +295,11 @@ function DailyQuestsSection() {
             {doneCount}/{totalCount} completed
           </div>
         </div>
-        <div className="text-xs font-mono font-bold text-nb-fg-muted">
-          Resets at midnight
+        <div className="text-xs font-mono font-bold text-nb-fg-muted text-right">
+          <div>Resets at midnight</div>
+          <div className="text-[10px] font-sans font-medium normal-case">
+            Terisi otomatis dari data asli
+          </div>
         </div>
       </div>
 
@@ -280,7 +309,9 @@ function DailyQuestsSection() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {dailyQuests.map((quest) => (
+          {dailyQuests.map((quest) => {
+            const p = evaluateQuestProgress(quest)
+            return (
             <div
               key={quest.id}
               className="flex items-center justify-between gap-3 p-3 border-2 border-nb-border bg-white"
@@ -309,20 +340,23 @@ function DailyQuestsSection() {
                 <span className="text-xs font-mono font-bold text-nb-orange">
                   +{quest.xp} XP
                 </span>
-                {!quest.done && (
-                  <button
-                    onClick={() => {
-                      completeQuest(quest.id)
-                      toast.success(`Quest complete! +${quest.xp} XP`)
-                    }}
-                    className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider border-2 border-nb-border bg-nb-yellow cursor-pointer hover:shadow-nb-sm transition-all"
+                {/* No claim button — progress is read straight off the data. */}
+                {quest.done ? (
+                  <span className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider border-2 border-nb-border bg-nb-green text-white">
+                    ✓ Done
+                  </span>
+                ) : (
+                  <span
+                    className="px-2 py-1 text-[10px] font-mono font-bold border-2 border-nb-border bg-nb-bg-muted text-nb-fg-muted"
+                    title="Selesai otomatis begitu datanya tercatat"
                   >
-                    Claim
-                  </button>
+                    {p ? `${p.current}/${p.target}` : 'n/a'}
+                  </span>
                 )}
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </NeubruCard>

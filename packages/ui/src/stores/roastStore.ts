@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { todayStr } from '@wos/shared'
 
 const STORAGE_KEY = 'wos_roast_mode'
 
@@ -26,7 +27,8 @@ const ROAST_TEMPLATES = [
   // Multiple streaming subs
   (_income: number, _foodSpent: number, tx: any[]) => {
     const descs = tx.map((t) => t.description?.toLowerCase() || '').join(' ')
-    const streamingKeywords = ['netflix', 'disney', 'hbo', 'spotify', 'youtube', 'vidio', 'prime', 'apple tv', 'apple music', 'iTunes']
+    // Keywords must be lowercase — descs is already lowercased above.
+    const streamingKeywords = ['netflix', 'disney', 'hbo', 'spotify', 'youtube', 'vidio', 'prime', 'apple tv', 'apple music', 'itunes']
     const found = streamingKeywords.filter((k) => descs.includes(k))
     if (found.length >= 3) return `Netflix + Disney+ + HBO... lo bikin multiplex sendiri di rumah? 🎬`
     if (found.length >= 2) return `Langganan ${found.length} streaming service? Prioritaskan hiburan daripada masa depan ya.. 📺`
@@ -58,12 +60,15 @@ const ROAST_TEMPLATES = [
     if (savingsPct >= 30 && income > 0) return `Saving ${savingsPct}% — mulai ketara nih jiwa pelitnya. Good job! 💰`
     return null
   },
-  // No transactions today
+  // No transactions today — only fires in the evening, so an 8am user isn't
+  // scolded for not having spent money yet today.
   (_income: number, _foodSpent: number, tx: any[], _budgets: any[], todayCount: number) => {
+    if (new Date().getHours() < 18) return null
     if (todayCount === 0 && tx.length > 0) return `Hari ini gak ada transaksi. Apa lo puasa? Atau... gak punya uang? 😱`
     return null
   },
-  // Budget overspend
+  // Budget overspend — b.pct is the UNCLAMPED percentage from budgetVsActual
+  // (barPct is the clamped one), so a 300% overspend actually says 300%.
   (_income: number, _foodSpent: number, _tx: any[], budgets: any[]) => {
     for (const b of budgets) {
       if (b.pct >= 100) {
@@ -73,6 +78,27 @@ const ROAST_TEMPLATES = [
     return null
   },
 ]
+
+// Same hashing + LCG shuffle used by levelStore's daily quest pick, so "Roast
+// of the Day" is stable for the whole day and only rolls over at midnight.
+function hashStr(str: string): number {
+  let hash = 5381
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) & 0xffffffff
+  }
+  return hash >>> 0
+}
+
+function seededOrder(seedStr: string, length: number): number[] {
+  const indices = Array.from({ length }, (_, i) => i)
+  let s = hashStr(seedStr)
+  for (let i = indices.length - 1; i > 0; i--) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff
+    const j = s % (i + 1)
+    ;[indices[i], indices[j]] = [indices[j]!, indices[i]!]
+  }
+  return indices
+}
 
 export const useRoastStore = create<RoastState>((set, get) => ({
   roastMode: loadRoastMode(),
@@ -88,21 +114,29 @@ export const useRoastStore = create<RoastState>((set, get) => ({
   },
 
   generateRoast: (transactions, budgets) => {
-    const income = transactions
+    const today = todayStr()
+    const thisMonthKey = today.slice(0, 7)
+
+    // The caller passes all-time history, but the roast copy talks about
+    // "bulan ini" — so scope it here. Transfers between your own accounts
+    // aren't real spending either.
+    const monthTx = transactions.filter(
+      (t: any) => typeof t.date === 'string' && t.date.startsWith(thisMonthKey) && t.category !== 'Transfer',
+    )
+
+    const income = monthTx
       .filter((t: any) => t.type === 'income')
       .reduce((s: number, t: any) => s + t.amount, 0)
 
-    const foodSpent = transactions
+    const foodSpent = monthTx
       .filter((t: any) => t.type === 'expense' && t.category === 'Makan')
       .reduce((s: number, t: any) => s + t.amount, 0)
 
-    const today = new Date().toISOString().slice(0, 10)
-    const todayCount = transactions.filter((t: any) => t.date === today).length
+    const todayCount = monthTx.filter((t: any) => t.date === today).length
 
-    // Shuffle templates and try each one
-    const shuffled = [...ROAST_TEMPLATES].sort(() => Math.random() - 0.5)
-    for (const template of shuffled) {
-      const result = template(income, foodSpent, transactions, budgets, todayCount)
+    // Deterministic "Roast of the Day": same order all day, new one at midnight.
+    for (const i of seededOrder(today, ROAST_TEMPLATES.length)) {
+      const result = ROAST_TEMPLATES[i]!(income, foodSpent, monthTx, budgets, todayCount)
       if (result) return result
     }
 
@@ -114,6 +148,6 @@ export const useRoastStore = create<RoastState>((set, get) => ({
       'Spending habits lo... interesting. Very interesting. 🤔',
       'Jangan lupa nabung ya, besok udah tua. 👴',
     ]
-    return fallbacks[Math.floor(Math.random() * fallbacks.length)]!
+    return fallbacks[hashStr(today) % fallbacks.length]!
   },
 }))

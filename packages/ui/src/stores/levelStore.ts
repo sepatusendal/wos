@@ -1,4 +1,12 @@
 import { create } from 'zustand'
+import { useFinanceStore } from './financeStore'
+import { useHabitStore } from './habitStore'
+import { useTodoStore } from './todoStore'
+import { useNotesStore } from './notesStore'
+import { useNetWorthStore } from './netWorthStore'
+import { useWealthStore } from './wealthStore'
+import { useLiabilityStore } from './liabilityStore'
+import { useCheckinStore } from './checkinStore'
 
 interface SkillLevels {
   wealth: number
@@ -25,6 +33,10 @@ interface LevelState {
   addXP: (amount: number) => void
   spendSkillPoint: (tree: 'wealth' | 'vitality' | 'wisdom') => void
   completeQuest: (id: string) => void
+  /** Award a quest's XP because its real-data condition just became true. Returns true only on the transition (never re-awards). */
+  autoCompleteQuest: (id: string) => boolean
+  /** Re-derive every quest from real store data. Returns the ids that newly completed on this pass. */
+  evaluateQuests: () => string[]
   generateDailyQuests: (userId: string) => void
 }
 
@@ -137,20 +149,97 @@ function migrateLegacyKey(userId: string) {
   }
 }
 
+// Every quest here MUST be verifiable against real stored data (see
+// `evaluateQuestProgress`). Quests that could only ever be self-reported —
+// "review catatan minggu ini", "kontribusi ke savings goal" (no contribution
+// mechanism exists), "review subscription aktif", "pertahankan habit streak" —
+// were removed rather than left as a button the user could press for free XP.
 const QUEST_POOL: Omit<DailyQuest, 'done'>[] = [
   { id: 'q_log_tx', desc: 'Catat 1 transaksi hari ini', xp: 30 },
   { id: 'q_habit_3', desc: 'Selesaikan 3 habit hari ini', xp: 40 },
-  { id: 'q_journal', desc: 'Tulis 1 journal entry', xp: 35 },
-  { id: 'q_budget', desc: 'Buat atau update budget', xp: 40 },
+  { id: 'q_journal', desc: 'Tulis 1 note bertanggal hari ini', xp: 35 },
+  { id: 'q_budget', desc: 'Buat 1 budget baru hari ini', xp: 40 },
   { id: 'q_checkin', desc: 'Daily check-in', xp: 25 },
-  { id: 'q_networth', desc: 'Catat net worth hari ini', xp: 45 },
-  { id: 'q_review_week', desc: 'Review catatan minggu ini', xp: 50 },
-  { id: 'q_goal_contribute', desc: 'Kontribusi ke savings goal', xp: 35 },
+  { id: 'q_networth', desc: 'Snapshot net worth hari ini', xp: 45 },
   { id: 'q_todo_5', desc: 'Selesaikan 5 todo hari ini', xp: 40 },
-  { id: 'q_sub_review', desc: 'Review subscription aktif', xp: 30 },
-  { id: 'q_wealth_log', desc: 'Update asset portfolio', xp: 45 },
-  { id: 'q_streak_check', desc: 'Pertahankan habit streak', xp: 35 },
+  { id: 'q_wealth_log', desc: 'Update asset / liability hari ini', xp: 45 },
 ]
+
+const QUEST_IDS = new Set(QUEST_POOL.map((q) => q.id))
+
+export interface QuestProgress {
+  current: number
+  target: number
+  done: boolean
+}
+
+/** Day part of an ISO timestamp (`2026-08-11T09:12:00.000Z` → `2026-08-11`). */
+function isoDay(iso: string | null | undefined): string {
+  return typeof iso === 'string' ? iso.slice(0, 10) : ''
+}
+
+function progress(current: number, target: number): QuestProgress {
+  return { current: Math.min(current, target), target, done: current >= target }
+}
+
+/**
+ * Derive a quest's state from what the user actually recorded. Reads sibling
+ * stores via `getState()` — never from a snapshot — so this is always
+ * evaluated against live data. Returns null for an unknown id (e.g. a quest
+ * removed from the pool that is still sitting in persisted state).
+ */
+export function evaluateQuestProgress(quest: Pick<DailyQuest, 'id'>): QuestProgress | null {
+  const today = todayStr()
+
+  switch (quest.id) {
+    case 'q_log_tx': {
+      const tx = useFinanceStore.getState().transactions ?? []
+      return progress(tx.filter((t) => t.date === today).length, 1)
+    }
+    case 'q_habit_3': {
+      const logs = useHabitStore.getState().logs ?? []
+      return progress(logs.filter((l) => l.date === today && l.done).length, 3)
+    }
+    case 'q_journal': {
+      const notes = useNotesStore.getState().notes ?? []
+      return progress(notes.filter((n) => n.date === today).length, 1)
+    }
+    case 'q_budget': {
+      // Budgets carry `created_at` only — an edit leaves no timestamp behind,
+      // so this quest is scoped to newly created budgets.
+      const budgets = useFinanceStore.getState().budgets ?? []
+      return progress(budgets.filter((b) => isoDay(b.createdAt) === today).length, 1)
+    }
+    case 'q_checkin': {
+      return progress(useCheckinStore.getState().todayChecked ? 1 : 0, 1)
+    }
+    case 'q_networth': {
+      const entries = useNetWorthStore.getState().entries ?? []
+      return progress(entries.filter((e) => e.date === today).length, 1)
+    }
+    case 'q_todo_5': {
+      // Todos have no dedicated "completedAt" — `updatedAt` on a completed
+      // todo is the closest honest proxy (toggleComplete/editTodo bump it).
+      const todos = useTodoStore.getState().todos ?? []
+      return progress(todos.filter((t) => t.completed && isoDay(t.updatedAt) === today).length, 5)
+    }
+    case 'q_wealth_log': {
+      const assets = useWealthStore.getState().assets ?? []
+      const liabilities = useLiabilityStore.getState().liabilities ?? []
+      const touched =
+        assets.filter((a) => isoDay(a.lastUpdated) === today || isoDay(a.createdAt) === today).length +
+        liabilities.filter((l) => isoDay(l.createdAt) === today).length
+      return progress(touched, 1)
+    }
+    default:
+      return null
+  }
+}
+
+/** Vitality's one real mechanical effect — see `habitStore.getStreak`. */
+export function streakFreezeAllowance(vitalityLevel: number): number {
+  return Math.floor(vitalityLevel / 3)
+}
 
 
 // Seeded shuffle based on userId + date for consistent daily quests
@@ -257,10 +346,21 @@ export const useLevelStore = create<LevelState>((set, get) => {
       })
     },
 
+    // Kept for API compatibility. There is no "claim" path any more: a quest
+    // only completes when its real-data condition holds, so this is just
+    // `autoCompleteQuest` under the old name.
     completeQuest: (id: string) => {
+      get().autoCompleteQuest(id)
+    },
+
+    autoCompleteQuest: (id: string) => {
       const state = get()
       const quest = state.dailyQuests.find((q) => q.id === id)
-      if (!quest || quest.done) return
+      // `done` is the re-award guard — XP is paid exactly once per quest/day.
+      if (!quest || quest.done) return false
+
+      const p = evaluateQuestProgress(quest)
+      if (!p || !p.done) return false
 
       const newQuests = state.dailyQuests.map((q) =>
         q.id === id ? { ...q, done: true } : q,
@@ -279,19 +379,37 @@ export const useLevelStore = create<LevelState>((set, get) => {
 
       // Award XP for completing quest
       get().addXP(quest.xp)
+      return true
+    },
+
+    evaluateQuests: () => {
+      const completed: string[] = []
+      for (const quest of get().dailyQuests) {
+        if (quest.done) continue
+        if (get().autoCompleteQuest(quest.id)) completed.push(quest.id)
+      }
+      return completed
     },
 
     generateDailyQuests: (userId: string) => {
       const today = todayStr()
       const state = get()
 
-      // Skip if already generated for today
-      if (state.dailyQuestDate === today && state.dailyQuests.length > 0) return
+      // Skip if already generated for today — unless today's set still holds
+      // a quest id that has since been retired from the pool (those can never
+      // be satisfied, so they'd sit unfinishable for the rest of the day).
+      const allKnown = state.dailyQuests.every((q) => QUEST_IDS.has(q.id))
+      if (state.dailyQuestDate === today && state.dailyQuests.length > 0 && allKnown) return
 
+      // Carry `done` across a same-day regeneration so a quest already paid
+      // out today can't be re-awarded.
+      const alreadyDone = new Set(
+        state.dailyQuestDate === today ? state.dailyQuests.filter((q) => q.done).map((q) => q.id) : [],
+      )
       const indices = seededShuffle(userId, today)
       const quests: DailyQuest[] = indices.map((i) => ({
         ...QUEST_POOL[i]!,
-        done: false,
+        done: alreadyDone.has(QUEST_POOL[i]!.id),
       }))
 
       const updated: PersistedState = {

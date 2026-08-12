@@ -31,7 +31,7 @@ type DateFilter = 'today' | 'month' | 'year' | 'custom' | 'all'
 export default function DashboardPage() {
   const userId = useAuthStore((s) => s.userId)
   const formatCurrency = useFormatCurrency()
-  const { transactions, budgets, accounts, savingsGoals, recurring, fetchAll: fetchFinance } = useFinanceStore()
+  const { transactions, budgets, accounts, savingsGoals, recurring, getGoalProgress, fetchAll: fetchFinance } = useFinanceStore()
   const { assets, fetchAll: fetchWealth } = useWealthStore()
   const { entries, fetchAll: fetchNetWorth } = useNetWorthStore()
   const { todos, fetchAll: fetchTodo } = useTodoStore()
@@ -73,22 +73,30 @@ export default function DashboardPage() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   }, [thisMonthKey])
 
-  const monthIncome = useMemo(() => filteredTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0), [filteredTx])
-  const monthExpense = useMemo(() => filteredTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0), [filteredTx])
+  // Transfers move money between your own accounts — they're not real
+  // income/expense and would otherwise inflate both sides of every KPI.
+  const monthIncome = useMemo(() => filteredTx.filter((t) => t.type === 'income' && t.category !== 'Transfer').reduce((s, t) => s + t.amount, 0), [filteredTx])
+  const monthExpense = useMemo(() => filteredTx.filter((t) => t.type === 'expense' && t.category !== 'Transfer').reduce((s, t) => s + t.amount, 0), [filteredTx])
   const monthNet = monthIncome - monthExpense
 
-  const prevIncome = useMemo(() => transactions.filter((t) => t.type === 'income' && t.date.startsWith(prevMonthKey)).reduce((s, t) => s + t.amount, 0), [transactions, prevMonthKey])
-  const prevExpense = useMemo(() => transactions.filter((t) => t.type === 'expense' && t.date.startsWith(prevMonthKey)).reduce((s, t) => s + t.amount, 0), [transactions, prevMonthKey])
+  const prevIncome = useMemo(() => transactions.filter((t) => t.type === 'income' && t.category !== 'Transfer' && t.date.startsWith(prevMonthKey)).reduce((s, t) => s + t.amount, 0), [transactions, prevMonthKey])
+  const prevExpense = useMemo(() => transactions.filter((t) => t.type === 'expense' && t.category !== 'Transfer' && t.date.startsWith(prevMonthKey)).reduce((s, t) => s + t.amount, 0), [transactions, prevMonthKey])
 
   const incomeChange = dateFilter === 'month' ? pctChange(monthIncome, prevIncome) : null
   const expenseChange = dateFilter === 'month' ? pctChange(monthExpense, prevExpense) : null
-  const savingsRate = monthIncome > 0 ? Math.max(0, Math.round((monthNet / monthIncome) * 100)) : 0
+  // A negative savings rate is the whole point of the metric — don't floor it
+  // at 0, and keep "no income at all" visually distinct from "saved nothing".
+  const savingsRate = monthIncome > 0 ? Math.round((monthNet / monthIncome) * 100) : null
+
+  const accountTotal = useMemo(() => accounts.reduce((s, a) => s + a.balance, 0), [accounts])
 
   const assetTotal = useMemo(() => assets.reduce((s, a) => s + a.quantity * a.unitPrice, 0), [assets])
   const latestNW = useMemo(() => {
     if (entries.length === 0) return 0
     return entries.reduce((a, b) => (a.date ?? '') > (b.date ?? '') ? a : b).netWorth
   }, [entries])
+  // KPI uses the full count; the preview list below only renders the first 5.
+  const activeTodoCount = useMemo(() => todos.filter((t) => !t.completed).length, [todos])
   const activeTodos = useMemo(() => todos.filter((t) => !t.completed).slice(0, 5), [todos])
 
   const monthlyCashFlow = useMemo(() => {
@@ -99,6 +107,7 @@ export default function DashboardPage() {
       months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, income: 0, expense: 0 })
     }
     transactions.forEach((t) => {
+      if (t.category === 'Transfer') return
       const bucket = months.find((m) => m.key === t.date.slice(0, 7))
       if (!bucket) return
       if (t.type === 'income') bucket.income += t.amount
@@ -109,7 +118,7 @@ export default function DashboardPage() {
 
   const categoryPie = useMemo(() => {
     const map: Record<string, number> = {}
-    filteredTx.filter((t) => t.type === 'expense').forEach((t) => {
+    filteredTx.filter((t) => t.type === 'expense' && t.category !== 'Transfer').forEach((t) => {
       map[t.category] = (map[t.category] || 0) + t.amount
     })
     return Object.entries(map)
@@ -118,20 +127,28 @@ export default function DashboardPage() {
       .map(([name, value]) => ({ name, value }))
   }, [filteredTx])
 
+  // Budget limits are always monthly, so the spend side must always come from
+  // the current calendar month — NOT from filteredTx, or "This Year"/"All Time"
+  // would compare a year of spending against one month's limit.
   const budgetProgress = useMemo(() => {
     return budgets.map((b) => {
-      const spent = filteredTx.filter((t) => t.type === 'expense' && t.category === b.category).reduce((s, t) => s + t.amount, 0)
+      const spent = transactions
+        .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(thisMonthKey))
+        .reduce((s, t) => s + t.amount, 0)
       return { ...b, spent, pct: Math.min(b.limit > 0 ? Math.round((spent / b.limit) * 100) : 0, 100) }
     })
-  }, [budgets, filteredTx])
+  }, [budgets, transactions, thisMonthKey])
 
   const recentTransactions = useMemo(() => [...filteredTx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7), [filteredTx])
 
+  // Use live progress (account-linked goals read their account balance) rather
+  // than the raw savedAmount column, which is stale for linked goals.
   const goalTotals = useMemo(() => {
     const total = savingsGoals.reduce((s, g) => s + g.targetAmount, 0)
-    const saved = savingsGoals.reduce((s, g) => s + g.savedAmount, 0)
-    return { total, saved, pct: total ? Math.min(Math.round((saved / total) * 100), 100) : 0 }
-  }, [savingsGoals])
+    const saved = savingsGoals.reduce((s, g) => s + getGoalProgress(g), 0)
+    const completed = savingsGoals.filter((g) => g.targetAmount > 0 && getGoalProgress(g) >= g.targetAmount).length
+    return { total, saved, completed }
+  }, [savingsGoals, getGoalProgress, accounts])
 
   const netWorthTrend = useMemo(() => {
     return [...entries]
@@ -202,13 +219,18 @@ export default function DashboardPage() {
       <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-5 mb-7">
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">
-            {dateFilter === 'all' ? 'Total Balance' : `Balance (${filterLabel})`}
+            {dateFilter === 'all' ? 'Arus Kas (All Time)' : `Arus Kas (${filterLabel})`}
           </div>
           <div className={`font-mono text-xl font-extrabold ${monthNet >= 0 ? 'text-nb-green' : 'text-nb-red'}`}>{formatCurrency(monthNet)}</div>
           <div className="text-xs text-nb-fg-muted mt-1 font-medium">
             +{formatCurrency(monthIncome)} · -{formatCurrency(monthExpense)}
-            {changeBadge(pctChange(monthNet, prevIncome - prevExpense))}
+            {changeBadge(dateFilter === 'month' ? pctChange(monthNet, prevIncome - prevExpense) : null)}
           </div>
+        </NeubruCard>
+        <NeubruCard>
+          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Saldo Akun</div>
+          <div className={`font-mono text-xl font-extrabold ${accountTotal >= 0 ? 'text-nb-green' : 'text-nb-red'}`}>{formatCurrency(accountTotal)}</div>
+          <div className="text-xs text-nb-fg-muted mt-1 font-medium">{accounts.length} akun · saldo riil</div>
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Income</div>
@@ -222,8 +244,10 @@ export default function DashboardPage() {
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Savings Rate</div>
-          <div className={`font-mono text-xl font-extrabold ${savingsRate >= 20 ? 'text-nb-green' : savingsRate > 0 ? 'text-nb-orange' : 'text-nb-red'}`}>{savingsRate}%</div>
-          <div className="text-xs text-nb-fg-muted mt-1 font-medium">of income</div>
+          <div className={`font-mono text-xl font-extrabold ${savingsRate === null ? 'text-nb-fg-muted' : savingsRate >= 20 ? 'text-nb-green' : savingsRate > 0 ? 'text-nb-orange' : 'text-nb-red'}`}>
+            {savingsRate === null ? '—' : `${savingsRate}%`}
+          </div>
+          <div className="text-xs text-nb-fg-muted mt-1 font-medium">{savingsRate === null ? 'no income data' : 'of income'}</div>
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Total Assets</div>
@@ -237,12 +261,14 @@ export default function DashboardPage() {
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Savings Goal</div>
-          <div className="text-nb-purple font-mono text-xl font-extrabold">{goalTotals.pct}%</div>
-          <div className="text-xs text-nb-fg-muted mt-1 font-medium">{formatCurrency(goalTotals.saved)} of {formatCurrency(goalTotals.total)}</div>
+          <div className="text-nb-purple font-mono text-xl font-extrabold">{formatCurrency(goalTotals.saved)}</div>
+          <div className="text-xs text-nb-fg-muted mt-1 font-medium">
+            of {formatCurrency(goalTotals.total)} · {goalTotals.completed}/{savingsGoals.length} tercapai
+          </div>
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Active Todos</div>
-          <div className="text-nb-orange font-mono text-xl font-extrabold">{activeTodos.length}</div>
+          <div className="text-nb-orange font-mono text-xl font-extrabold">{activeTodoCount}</div>
           <div className="text-xs text-nb-fg-muted mt-1 font-medium">
             {todos.filter((t) => t.completed).length} completed
             {budgetWarnings > 0 && (
@@ -253,15 +279,8 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-5 mb-7">
-        <NeubruCard className="!p-0 overflow-hidden">
-          <FinancialPet />
-        </NeubruCard>
-        <OnThisDay />
-      </div>
-
-      <div className="grid grid-cols-2 gap-5 mb-7">
         <NeubruCard>
-          <div className="text-sm font-bold uppercase text-nb-fg-muted mb-4">Cash Flow (6 Months)</div>
+          <div className="text-sm font-bold uppercase text-nb-fg-muted mb-4">Cash Flow (6 Bulan Terakhir · fixed window)</div>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={monthlyCashFlow}>
               <defs>
@@ -318,7 +337,7 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-5 mb-7">
         <NeubruCard>
-          <div className="text-sm font-bold uppercase text-nb-fg-muted mb-4">Net Worth Trend</div>
+          <div className="text-sm font-bold uppercase text-nb-fg-muted mb-4">Net Worth Trend (Semua Catatan · fixed window)</div>
           {netWorthTrend.length === 0 ? (
             <p className="text-sm text-nb-fg-muted">No net worth records yet</p>
           ) : (
@@ -335,7 +354,9 @@ export default function DashboardPage() {
         </NeubruCard>
 
         <NeubruCard>
-          <div className="text-sm font-bold uppercase text-nb-fg-muted mb-4">Budget ({filterLabel})</div>
+          <div className="text-sm font-bold uppercase text-nb-fg-muted mb-4">
+            Budget <span className="normal-case font-medium">(bulan ini · {formatMonthShort(thisMonthKey)}, tidak ikut filter)</span>
+          </div>
           {budgetProgress.length === 0 ? (
             <p className="text-sm text-nb-fg-muted">No budgets set. Add one in the Finance page.</p>
           ) : (
@@ -354,6 +375,14 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           )}
         </NeubruCard>
+      </div>
+
+      {/* Fun widgets sit below the financial substance of the page */}
+      <div className="grid grid-cols-2 gap-5 mb-7">
+        <NeubruCard className="!p-0 overflow-hidden">
+          <FinancialPet />
+        </NeubruCard>
+        <OnThisDay />
       </div>
 
       <div className="grid grid-cols-2 gap-5 mb-7">
@@ -448,6 +477,7 @@ export default function DashboardPage() {
                 {(() => {
                   const catMap: Record<string, { income: number; expense: number }> = {}
                   filteredTx.forEach((t) => {
+                    if (t.category === 'Transfer') return
                     const entry = catMap[t.category] = catMap[t.category] || { income: 0, expense: 0 }
                     if (t.type === 'income') entry.income += t.amount
                     else entry.expense += t.amount
@@ -517,7 +547,8 @@ export default function DashboardPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {savingsGoals.slice(0, 5).map((g) => {
-                const pct = Math.min(g.targetAmount > 0 ? Math.round((g.savedAmount / g.targetAmount) * 100) : 0, 100)
+                const saved = getGoalProgress(g)
+                const pct = Math.min(g.targetAmount > 0 ? Math.round((saved / g.targetAmount) * 100) : 0, 100)
                 return (
                   <div key={g.id}>
                     <div className="flex justify-between text-xs font-bold mb-1">
@@ -528,7 +559,7 @@ export default function DashboardPage() {
                       <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, background: pct >= 100 ? '#22c55e' : pct > 50 ? '#2f6bff' : '#ffd800' }} />
                     </div>
                     <div className="text-[10px] text-nb-fg-muted mt-0.5 font-mono">
-                      {formatCurrency(g.savedAmount)} / {formatCurrency(g.targetAmount)}
+                      {formatCurrency(saved)} / {formatCurrency(g.targetAmount)}
                       {g.deadline && <span> · Target: {formatShortDate(g.deadline)}</span>}
                     </div>
                   </div>

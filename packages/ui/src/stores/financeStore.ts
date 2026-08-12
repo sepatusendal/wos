@@ -19,13 +19,16 @@ interface FinanceState {
   addTransaction: (userId: string, t: Omit<Transaction, 'id' | 'createdAt'>) => Promise<void>
   editTransaction: (t: { id: string; type: string; amount: number; category: string; description: string; date: string; accountId: string | null; flexibility?: string }) => Promise<void>
   deleteTransaction: (id: string) => Promise<void>
-  addBudget: (userId: string, b: Omit<Budget, 'id'>) => Promise<{ ok: boolean; error?: string }>
+  addBudget: (userId: string, b: { category: string; limit: number; rolloverEnabled?: boolean }) => Promise<{ ok: boolean; error?: string }>
+  editBudget: (b: { id: string; limit: number; rolloverEnabled?: boolean }) => Promise<{ ok: boolean; error?: string }>
   deleteBudget: (id: string) => Promise<void>
   addAccount: (userId: string, a: { name: string; type: string; balance: number }) => Promise<void>
   editAccount: (a: { id: string; name: string; type: string; balance: number }) => Promise<void>
   deleteAccount: (id: string) => Promise<void>
-  addSavingsGoal: (userId: string, g: { name: string; targetAmount: number; savedAmount: number; deadline: string | null }) => Promise<void>
-  editSavingsGoal: (g: { id: string; name: string; targetAmount: number; savedAmount: number; deadline: string | null }) => Promise<void>
+  addSavingsGoal: (userId: string, g: { name: string; targetAmount: number; savedAmount: number; deadline: string | null; accountId?: string | null }) => Promise<void>
+  editSavingsGoal: (g: { id: string; name: string; targetAmount: number; savedAmount: number; deadline: string | null; accountId?: string | null }) => Promise<void>
+  /** Progress for a goal: linked account's live balance if `accountId` is set (always in sync — "saving" = transferring into that account), otherwise the manually-typed `savedAmount`. */
+  getGoalProgress: (goal: SavingsGoal) => number
   deleteSavingsGoal: (id: string) => Promise<void>
   addRecurring: (userId: string, r: Omit<RecurringTransaction, 'id' | 'createdAt'>) => Promise<void>
   editRecurring: (r: { id: string; name: string; type: string; amount: number; category: string; frequency: string; nextDate: string; active: boolean }) => Promise<void>
@@ -176,8 +179,18 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
       return { ok: false, error: 'Budget untuk kategori ini sudah ada' }
     }
     const id = generateId()
-    await adapter.db.insert('budgets').values({ id, user_id: userId, category: b.category, limit: roundMoney(b.limit) })
+    await adapter.db.insert('budgets').values({ id, user_id: userId, category: b.category, limit: roundMoney(b.limit), created_at: isoNow(), rollover_enabled: !!b.rolloverEnabled })
     await get().fetchAll(userId)
+    return { ok: true }
+  },
+
+  editBudget: async (b) => {
+    const { adapter } = get()
+    if (!adapter) return { ok: false, error: 'Database tidak tersedia' }
+    if (!Number.isFinite(b.limit) || b.limit <= 0) return { ok: false, error: 'Limit harus lebih dari 0' }
+    await adapter.db.update('budgets').set({ limit: roundMoney(b.limit), rollover_enabled: !!b.rolloverEnabled }).where(eq('id', b.id))
+    set((s) => ({ budgets: s.budgets.map((x) => (x.id === b.id ? { ...x, limit: roundMoney(b.limit), rolloverEnabled: !!b.rolloverEnabled } : x)) }))
+    get().computeBudgetRollover()
     return { ok: true }
   },
 
@@ -240,7 +253,7 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const { adapter } = get()
     if (!adapter) return
     const id = generateId()
-    await adapter.db.insert('savings_goals').values({ id, user_id: userId, name: g.name, target_amount: roundMoney(g.targetAmount), saved_amount: roundMoney(g.savedAmount), deadline: g.deadline ?? null, created_at: isoNow() })
+    await adapter.db.insert('savings_goals').values({ id, user_id: userId, name: g.name, target_amount: roundMoney(g.targetAmount), saved_amount: roundMoney(g.savedAmount), account_id: g.accountId ?? null, deadline: g.deadline ?? null, created_at: isoNow() })
     await get().fetchAll(userId)
   },
 
@@ -249,9 +262,10 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     if (!adapter) return
     const targetAmount = roundMoney(g.targetAmount)
     const savedAmount = roundMoney(g.savedAmount)
-    await adapter.db.update('savings_goals').set({ name: g.name, target_amount: targetAmount, saved_amount: savedAmount, deadline: g.deadline ?? null }).where(eq('id', g.id))
+    const accountId = g.accountId ?? null
+    await adapter.db.update('savings_goals').set({ name: g.name, target_amount: targetAmount, saved_amount: savedAmount, account_id: accountId, deadline: g.deadline ?? null }).where(eq('id', g.id))
     set((s) => ({
-      savingsGoals: s.savingsGoals.map((x) => (x.id === g.id ? { ...x, name: g.name, targetAmount, savedAmount, deadline: g.deadline } : x)),
+      savingsGoals: s.savingsGoals.map((x) => (x.id === g.id ? { ...x, name: g.name, targetAmount, savedAmount, accountId, deadline: g.deadline } : x)),
     }))
   },
 
@@ -260,6 +274,12 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     if (!adapter) return
     await adapter.db.delete('savings_goals').where(eq('id', id))
     set((s) => ({ savingsGoals: s.savingsGoals.filter((x) => x.id !== id) }))
+  },
+
+  getGoalProgress: (goal) => {
+    if (!goal.accountId) return goal.savedAmount
+    const acct = get().accounts.find((a) => a.id === goal.accountId)
+    return acct ? acct.balance : goal.savedAmount
   },
 
   addRecurring: async (userId, r) => {
@@ -381,11 +401,18 @@ export const useFinanceStore = create<FinanceState>((set, get) => ({
     const lastMonthKey = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`
     const rollover: Record<string, number> = {}
     budgets.forEach((b) => {
+      if (!b.rolloverEnabled) return
+      // Only carry rollover from a month the budget actually existed for —
+      // otherwise a budget created today would retroactively "inherit"
+      // last month's unused amount from before it was ever set up.
+      if (b.createdAt && b.createdAt.slice(0, 7) >= lastMonthKey) return
       const spent = transactions
         .filter((t) => t.type === 'expense' && t.category === b.category && t.date.startsWith(lastMonthKey))
         .reduce((s, t) => s + t.amount, 0)
-      const unused = Math.max(0, roundMoney(b.limit - spent))
-      if (unused > 0) rollover[b.category] = unused
+      // Can be negative — an overspent month reduces this month's effective
+      // limit instead of only ever rewarding underspending.
+      const unused = roundMoney(b.limit - spent)
+      if (unused !== 0) rollover[b.category] = unused
     })
     set({ budgetRollover: rollover })
   },
@@ -416,7 +443,7 @@ function formatTx(t: any): Transaction {
 }
 
 function formatBudget(b: any): Budget {
-  return { id: b.id, category: b.category, limit: b.limit }
+  return { id: b.id, category: b.category, limit: b.limit, createdAt: b.created_at ?? '', rolloverEnabled: !!b.rollover_enabled }
 }
 
 function formatAccount(a: any): Account {
@@ -424,7 +451,7 @@ function formatAccount(a: any): Account {
 }
 
 function formatGoal(g: any): SavingsGoal {
-  return { id: g.id, name: g.name, targetAmount: g.target_amount, savedAmount: g.saved_amount ?? 0, deadline: g.deadline ?? null, createdAt: g.created_at }
+  return { id: g.id, name: g.name, targetAmount: g.target_amount, savedAmount: g.saved_amount ?? 0, accountId: g.account_id ?? null, deadline: g.deadline ?? null, createdAt: g.created_at }
 }
 
 function formatRecurring(r: any): RecurringTransaction {

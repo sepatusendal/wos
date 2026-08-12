@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore } from '@wos/ui'
+import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useLiabilityStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore } from '@wos/ui'
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
 import { getCurrentWindow, availableMonitors } from '@tauri-apps/api/window'
@@ -160,18 +160,28 @@ export default function App() {
         try { await tauriDb.execute(`ALTER TABLE transactions ADD COLUMN flexibility TEXT NOT NULL DEFAULT 'flexible'`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS budgets (
-            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, category TEXT NOT NULL, "limit" REAL NOT NULL
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, category TEXT NOT NULL, "limit" REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT '', rollover_enabled INTEGER NOT NULL DEFAULT 0
           )
         `)
+        try { await tauriDb.execute(`ALTER TABLE budgets ADD COLUMN created_at TEXT NOT NULL DEFAULT ''`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE budgets ADD COLUMN rollover_enabled INTEGER NOT NULL DEFAULT 0`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS assets (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL,
-            quantity REAL NOT NULL, unit_price REAL NOT NULL, buy_price REAL, buy_date TEXT,
+            quantity REAL NOT NULL, unit_price REAL NOT NULL, buy_price REAL, buy_date TEXT, ticker TEXT,
             notes TEXT NOT NULL DEFAULT '', last_updated TEXT NOT NULL, created_at TEXT NOT NULL
           )
         `)
         try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_price REAL`) } catch {}
         try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN buy_date TEXT`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE assets ADD COLUMN ticker TEXT`) } catch {}
+        await tauriDb.execute(`
+          CREATE TABLE IF NOT EXISTS liabilities (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL,
+            amount REAL NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+          )
+        `)
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS net_worth_entries (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, date TEXT NOT NULL,
@@ -211,11 +221,12 @@ export default function App() {
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS savings_goals (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
-            target_amount REAL NOT NULL, saved_amount REAL NOT NULL DEFAULT 0,
+            target_amount REAL NOT NULL, saved_amount REAL NOT NULL DEFAULT 0, account_id TEXT,
             deadline TEXT, created_at TEXT NOT NULL
           )
         `)
         try { await tauriDb.execute(`ALTER TABLE savings_goals ADD COLUMN deadline TEXT`) } catch {}
+        try { await tauriDb.execute(`ALTER TABLE savings_goals ADD COLUMN account_id TEXT`) } catch {}
         await tauriDb.execute(`
           CREATE TABLE IF NOT EXISTS recurring_transactions (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -270,6 +281,7 @@ export default function App() {
         setAdapter(adapter)
         useFinanceStore.getState().setAdapter(adapter)
         useWealthStore.getState().setAdapter(adapter)
+        useLiabilityStore.getState().setAdapter(adapter)
         useNetWorthStore.getState().setAdapter(adapter)
         useVaultStore.getState().setAdapter(adapter)
         useTodoStore.getState().setAdapter(adapter)

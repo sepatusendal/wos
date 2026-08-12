@@ -231,17 +231,23 @@ interface MoodComputeInput {
 }
 
 function computeMood(input: MoodComputeInput): PetMood {
-  // Priority order — evolved overrides most, hero overrides daily states
-  if (input.isBaby) return 'baby'
-  if (input.hasNewAchievement) return 'hero'
-  if (input.isEvolved) return 'evolved'
-
+  // The pet is a financial-health indicator first and a collectible second,
+  // so the money signals come before the cosmetic hero/evolved/baby states.
+  // (Previously `hero` and `evolved` sat on top and, because
+  // `hasNewAchievement` never expired, the pet was permanently a hero and
+  // silently stopped reporting overspend.)
   const anyOver100 = input.budgets.some((b) => b.pct > 100)
   const anyOver80 = input.budgets.some((b) => b.pct > 80)
 
   if (anyOver100) return 'shocked'
   if (input.todayTxCount === 0) return 'sleeping'
   if (anyOver80) return 'concerned'
+
+  // Nothing to warn about — cosmetic states may take over.
+  if (input.isBaby) return 'baby'
+  if (input.hasNewAchievement) return 'hero'
+  if (input.isEvolved) return 'evolved'
+
   if (input.savingsRate > 20 && input.netWorthTrend === 'up') return 'happy'
 
   return 'content'
@@ -253,7 +259,7 @@ export default function FinancialPet() {
   const [regDateSet, setRegDateSet] = useState(false)
 
   const { transactions, budgets } = useFinanceStore()
-  const { unlocked, getLastUnlocked } = useAchievementStore()
+  const { unlocked, unlockedAt, getLastUnlockedAt } = useAchievementStore()
   const todayChecked = useCheckinStore((s) => s.todayChecked)
   const { entries } = useNetWorthStore()
 
@@ -309,11 +315,18 @@ export default function FinancialPet() {
     // Today transactions
     const todayTxCount = transactions.filter((t) => t.date === today).length
 
-    // New achievement today (last unlocked within 24h)
-    const lastUnlocked = getLastUnlocked()
-    const hasNewAchievement = lastUnlocked !== null && unlocked.length > 0
+    // New achievement within the last 24h. This used to be
+    // `lastUnlocked !== null && unlocked.length > 0` — true forever after the
+    // very first unlock, which is what pinned the pet to "Hero". Unlock
+    // timestamps now come from achievementStore's persisted `unlockedAt`.
+    const lastAt = getLastUnlockedAt()
+    const hasNewAchievement =
+      lastAt !== null && Date.now() - new Date(lastAt).getTime() < 86400000
 
-    // Baby: first week
+    // Baby: first week. Limitation: `wos_reg_date` is stamped the first time
+    // this component mounts in this browser, not from the account's real
+    // creation date — the user record's `created_at` isn't exposed through
+    // useAuthStore, so an existing account on a new device reads as "baby".
     const regDate = getRegistrationDate()
     const isBaby = regDate ? daysBetween(regDate, today) <= 7 : false
 
@@ -329,7 +342,7 @@ export default function FinancialPet() {
       isBaby,
       isEvolved,
     }
-  }, [transactions, budgets, entries, unlocked, getLastUnlocked])
+  }, [transactions, budgets, entries, unlocked, unlockedAt, getLastUnlockedAt])
 
   const mood = useMemo(() => computeMood(moodInput), [moodInput])
   const petState = PET_MOODS[mood]
@@ -337,7 +350,9 @@ export default function FinancialPet() {
   // Small stats for the card
   const statLine = useMemo(() => {
     const parts: string[] = []
-    if (unlocked.length > 0) parts.push(`Lv.${unlocked.length}`)
+    // Badge count, not a level — "Lv." here collided with the real XP level
+    // shown by the skill tree / XP widget, which is a different number.
+    if (unlocked.length > 0) parts.push(`${unlocked.length} 🏅`)
     if (moodInput.todayTxCount > 0)
       parts.push(`${moodInput.todayTxCount} tx today`)
     if (todayChecked) parts.push('Checked in')

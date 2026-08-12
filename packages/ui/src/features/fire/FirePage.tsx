@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useFinanceStore } from '../../stores/financeStore'
 import { useWealthStore } from '../../stores/wealthStore'
+import { useLiabilityStore } from '../../stores/liabilityStore'
 import { useNetWorthStore } from '../../stores/netWorthStore'
 import { useAuthStore } from '../../stores/authStore'
 import { NeubruBtn, NeubruCard, NeubruInput } from '../../components'
@@ -42,6 +43,7 @@ export default function FirePage() {
   const transactions = useFinanceStore((s) => s.transactions)
   const accounts = useFinanceStore((s) => s.accounts)
   const assets = useWealthStore((s) => s.assets)
+  const liabilities = useLiabilityStore((s) => s.liabilities)
   const entries = useNetWorthStore((s) => s.entries)
 
   // Fetch all data on mount
@@ -49,9 +51,11 @@ export default function FirePage() {
     if (!userId) return
     const finance = useFinanceStore.getState()
     const wealth = useWealthStore.getState()
+    const liability = useLiabilityStore.getState()
     const netWorth = useNetWorthStore.getState()
     if (finance.fetchAll) finance.fetchAll(userId)
     if (wealth.fetchAll) wealth.fetchAll(userId)
+    if (liability.fetchAll) liability.fetchAll(userId)
     if (netWorth.fetchAll) netWorth.fetchAll(userId)
   }, [userId])
 
@@ -59,78 +63,79 @@ export default function FirePage() {
 
   const autoDefaults = useMemo(() => {
     const now = new Date()
-    // 6-month window inclusive of the current month (current month - 5 .. current month)
-    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
-    const cutoff = sixMonthsAgo.toISOString().slice(0, 7) // YYYY-MM
+    // Current month is still in progress — a half-finished month would drag
+    // the average down, so it never counts as a data month.
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
-    // Recent 6-month transactions
-    const recentTx = transactions.filter((t) => t.date >= cutoff)
+    // Sum per completed calendar month, so the divisor is the number of months
+    // that actually have data — not a hardcoded window.
+    const expenseByMonth: Record<string, number> = {}
+    const incomeByMonth: Record<string, number> = {}
+    for (const t of transactions) {
+      const key = t.date.slice(0, 7)
+      if (key >= currentMonthKey) continue // skip in-progress month (and any future-dated tx)
+      if (t.type === 'expense') expenseByMonth[key] = (expenseByMonth[key] || 0) + t.amount
+      else if (t.type === 'income') incomeByMonth[key] = (incomeByMonth[key] || 0) + t.amount
+    }
 
-    const totalExpense = recentTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-    const totalIncome = recentTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-    const months = Math.max(1, (now.getFullYear() - sixMonthsAgo.getFullYear()) * 12 + (now.getMonth() - sixMonthsAgo.getMonth() + 1))
+    const expenseMonths = Object.keys(expenseByMonth)
+    const incomeMonths = Object.keys(incomeByMonth)
+    const totalExpense = expenseMonths.reduce((s, k) => s + (expenseByMonth[k] || 0), 0)
+    const totalIncome = incomeMonths.reduce((s, k) => s + (incomeByMonth[k] || 0), 0)
 
-    const avgExpense = Math.round(totalExpense / months)
-    const avgIncome = Math.round(totalIncome / months)
+    const expenseMonthCount = expenseMonths.length
+    const avgExpense = expenseMonthCount > 0 ? Math.round(totalExpense / expenseMonthCount) : 0
+    const avgIncome = incomeMonths.length > 0 ? Math.round(totalIncome / incomeMonths.length) : 0
     const avgSavings = Math.max(0, avgIncome - avgExpense)
 
-    // Total current savings = accounts + assets
-    const accountTotal = accounts.reduce((s, a) => s + a.balance, 0)
+    // Live net worth — same definition as the Wealth page: assets − liabilities
     const assetTotal = assets.reduce((s, a) => s + a.quantity * a.unitPrice, 0)
-    const currentSavings = Math.round(accountTotal + assetTotal)
+    const liabilityTotal = liabilities.reduce((s, l) => s + l.amount, 0)
+    const netWorth = Math.round(assetTotal - liabilityTotal)
 
     // Cash & bank accounts for liquidity
     const cashBank = accounts
       .filter((a) => a.type === 'cash' || a.type === 'bank')
       .reduce((s, a) => s + a.balance, 0)
 
-    return { avgExpense, avgIncome, avgSavings, currentSavings, cashBank }
-  }, [transactions, accounts, assets])
+    return { avgExpense, avgIncome, avgSavings, expenseMonthCount, assetTotal, liabilityTotal, netWorth, cashBank }
+  }, [transactions, accounts, assets, liabilities])
 
   // ── Editable form state ────────────────────────────────────
+  // User overrides live in their own state (empty string = "use auto").
+  // Nothing but an explicit reset ever clears them, so an incidental
+  // re-render (e.g. one new transaction added elsewhere) can't wipe them.
 
-  const [currentSavings, setCurrentSavings] = useState(0)
-  const [monthlyExpenses, setMonthlyExpenses] = useState(0)
+  const [savingsOverride, setSavingsOverride] = useState('')
+  const [expensesOverride, setExpensesOverride] = useState('')
+  const [monthlySavingsOverride, setMonthlySavingsOverride] = useState('')
   const [annualReturn, setAnnualReturn] = useState(7)
   const [withdrawalRate, setWithdrawalRate] = useState(4)
-  const [monthlySavings, setMonthlySavings] = useState(0)
   const [extraMonthly, setExtraMonthly] = useState(0)
-  const [initialized, setInitialized] = useState(false)
 
-  // Track data version so we re-initialize when store data changes
-  const dataVersion = transactions.length + accounts.length + assets.length + entries.length
-  const prevDataVersion = useRef(dataVersion)
+  const currentSavings = savingsOverride !== '' ? Number(savingsOverride) || 0 : autoDefaults.netWorth
+  const monthlyExpenses = expensesOverride !== '' ? Number(expensesOverride) || 0 : autoDefaults.avgExpense
+  const monthlySavings = monthlySavingsOverride !== '' ? Number(monthlySavingsOverride) || 0 : autoDefaults.avgSavings
 
-  // Reset initialization flag when underlying store data changes
-  useEffect(() => {
-    if (prevDataVersion.current !== dataVersion) {
-      prevDataVersion.current = dataVersion
-      setInitialized(false)
-    }
-  }, [dataVersion])
-
-  // Pre-fill from data once loaded
-  useEffect(() => {
-    if (initialized) return
-    if (autoDefaults.avgExpense > 0 || autoDefaults.currentSavings > 0) {
-      setCurrentSavings(autoDefaults.currentSavings)
-      setMonthlyExpenses(autoDefaults.avgExpense)
-      setMonthlySavings(autoDefaults.avgSavings)
-      setInitialized(true)
-    }
-  }, [autoDefaults, initialized])
-
-  // Reset form to auto-detected values
+  // Refresh only the genuinely data-derived fields. Assumptions the user set
+  // (expected return, safe withdrawal rate, what-if slider) are left alone.
   const recalculate = useCallback(() => {
-    setCurrentSavings(autoDefaults.currentSavings)
-    setMonthlyExpenses(autoDefaults.avgExpense)
+    setSavingsOverride('')
+    setExpensesOverride('')
+    setMonthlySavingsOverride('')
+  }, [])
+
+  const resetAssumptions = useCallback(() => {
     setAnnualReturn(7)
     setWithdrawalRate(4)
-    setMonthlySavings(autoDefaults.avgSavings)
     setExtraMonthly(0)
-  }, [autoDefaults])
+  }, [])
 
   // ── FIRE Calculations ──────────────────────────────────────
+
+  // Less than 2 complete months of expense data = the average (and therefore
+  // the FIRE Number) is not meaningful yet. A manual override counts as data.
+  const enoughExpenseData = expensesOverride !== '' || autoDefaults.expenseMonthCount >= 2
 
   const fireNumber = useMemo(() => {
     if (withdrawalRate <= 0) return 0
@@ -175,11 +180,12 @@ export default function FirePage() {
       : 0
     const runwayScore = Math.min(25, Math.round((Math.min(runwayMonths, 12) / 12) * 25))
 
-    // 3. Debt Ratio (0-25) — inverse of debt/asset ratio
+    // 3. Debt Ratio (0-25) — inverse of debt/asset ratio.
+    // Uses the same live assets/liabilities as Current Net Worth above, so the
+    // page never shows two different definitions of wealth.
     const sortedEntries = [...entries].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
-    const latestEntry = sortedEntries[0]
-    const totalDebt = latestEntry?.totalLiabilities ?? 0
-    const totalAssetNW = latestEntry?.totalAssets ?? 0
+    const totalDebt = autoDefaults.liabilityTotal
+    const totalAssetNW = autoDefaults.assetTotal
     const hasNetWorthData = totalAssetNW > 0 || totalDebt > 0
     const debtRatio = totalAssetNW > 0 ? totalDebt / totalAssetNW : 0
     // No net worth data at all = neutral (half marks), not a perfect debt ratio
@@ -240,12 +246,24 @@ export default function FirePage() {
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">
             🎯 FIRE Number
           </div>
-          <div className="font-mono text-xl font-extrabold text-nb-blue">
-            {formatCurrency(fireNumber)}
-          </div>
-          <div className="text-xs text-nb-fg-muted mt-1 font-medium">
-            {withdrawalRate}% safe withdrawal
-          </div>
+          {enoughExpenseData ? (
+            <>
+              <div className="font-mono text-xl font-extrabold text-nb-blue">
+                {formatCurrency(fireNumber)}
+              </div>
+              <div className="text-xs text-nb-fg-muted mt-1 font-medium">
+                {withdrawalRate}% safe withdrawal · avg {autoDefaults.expenseMonthCount} bulan penuh
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="font-mono text-xl font-extrabold text-nb-fg-muted">—</div>
+              <div className="text-xs text-nb-fg-muted mt-1 font-medium leading-relaxed">
+                Butuh minimal 2 bulan data pengeluaran penuh untuk menghitung FIRE Number secara akurat
+                ({autoDefaults.expenseMonthCount}/2 terkumpul)
+              </div>
+            </>
+          )}
         </NeubruCard>
 
         {/* Years to FI */}
@@ -254,14 +272,18 @@ export default function FirePage() {
             ⏳ Years to FI
           </div>
           <div className="font-mono text-xl font-extrabold">
-            {!isFinite(whatIfYearsToFI) || whatIfYearsToFI > 200
-              ? 'N/A'
-              : whatIfYearsToFI < 0.5
-                ? 'Now! 🎉'
-                : `${whatIfYearsToFI.toFixed(1)} yrs`}
+            {!enoughExpenseData
+              ? '—'
+              : !isFinite(whatIfYearsToFI) || whatIfYearsToFI > 200
+                ? 'N/A'
+                : whatIfYearsToFI < 0.5
+                  ? 'Now! 🎉'
+                  : `${whatIfYearsToFI.toFixed(1)} yrs`}
           </div>
           <div className="text-xs text-nb-fg-muted mt-1 font-medium">
-            {fireYear ? `Freedom by ${fireYear}` : 'Increase savings to reach FI'}
+            {!enoughExpenseData
+              ? 'Menunggu 2 bulan data pengeluaran'
+              : fireYear ? `Freedom by ${fireYear}` : 'Increase savings to reach FI'}
           </div>
         </NeubruCard>
 
@@ -271,16 +293,18 @@ export default function FirePage() {
             📊 Progress
           </div>
           <div className="font-mono text-xl font-extrabold text-nb-green">
-            {progressPercent.toFixed(1)}%
+            {enoughExpenseData ? `${progressPercent.toFixed(1)}%` : '—'}
           </div>
           <div className="w-full h-3 bg-nb-bg-alt border-2 border-nb-border mt-2 rounded-sm overflow-hidden">
             <div
               className="h-full bg-nb-green transition-all duration-500"
-              style={{ width: `${Math.min(100, progressPercent)}%` }}
+              style={{ width: `${enoughExpenseData ? Math.min(100, progressPercent) : 0}%` }}
             />
           </div>
           <div className="text-xs text-nb-fg-muted mt-1 font-medium">
-            {formatCurrency(currentSavings)} / {formatCurrency(fireNumber)}
+            {enoughExpenseData
+              ? `${formatCurrency(currentSavings)} / ${formatCurrency(fireNumber)}`
+              : `Net worth ${formatCurrency(currentSavings)} · target belum bisa dihitung`}
           </div>
         </NeubruCard>
 
@@ -290,12 +314,14 @@ export default function FirePage() {
             🚀 Freedom Year
           </div>
           <div className="font-mono text-xl font-extrabold text-nb-orange">
-            {fireYear ?? '—'}
+            {enoughExpenseData ? (fireYear ?? '—') : '—'}
           </div>
           <div className="text-xs text-nb-fg-muted mt-1 font-medium">
-            {!isFinite(whatIfYearsToFI) || whatIfYearsToFI > 200
-              ? 'Save more to get there'
-              : `${whatIfYearsToFI < 1 ? 'Less than a year!' : `In ~${Math.ceil(whatIfYearsToFI)} years`}`}
+            {!enoughExpenseData
+              ? 'Menunggu 2 bulan data pengeluaran'
+              : !isFinite(whatIfYearsToFI) || whatIfYearsToFI > 200
+                ? 'Save more to get there'
+                : `${whatIfYearsToFI < 1 ? 'Less than a year!' : `In ~${Math.ceil(whatIfYearsToFI)} years`}`}
           </div>
         </NeubruCard>
       </div>
@@ -500,35 +526,57 @@ export default function FirePage() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {/* Current Savings */}
+          {/* Current Net Worth */}
           <div className="flex flex-col gap-1.5">
-            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">
-              💰 Current Savings
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">
+                💰 Net Worth (Aset − Liability)
+              </label>
+              {savingsOverride !== '' && (
+                <button
+                  onClick={() => setSavingsOverride('')}
+                  className="text-[10px] font-bold text-nb-red border-2 border-nb-red px-2 py-0.5 cursor-pointer hover:bg-nb-red/10 transition-colors uppercase"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
             <NeubruInput
-              value={currentSavings === 0 ? '' : String(currentSavings)}
-              onChange={(v) => setCurrentSavings(Number(v) || 0)}
-              placeholder="0"
+              value={savingsOverride}
+              onChange={setSavingsOverride}
+              placeholder={String(autoDefaults.netWorth)}
               type="number"
             />
             <span className="text-[0.65rem] text-nb-fg-muted font-medium">
-              Auto: accounts + assets
+              Auto: {formatCurrency(autoDefaults.netWorth)} — total aset dikurangi total liability
             </span>
           </div>
 
           {/* Monthly Expenses */}
           <div className="flex flex-col gap-1.5">
-            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">
-              🧾 Monthly Expenses
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">
+                🧾 Monthly Expenses
+              </label>
+              {expensesOverride !== '' && (
+                <button
+                  onClick={() => setExpensesOverride('')}
+                  className="text-[10px] font-bold text-nb-red border-2 border-nb-red px-2 py-0.5 cursor-pointer hover:bg-nb-red/10 transition-colors uppercase"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
             <NeubruInput
-              value={monthlyExpenses === 0 ? '' : String(monthlyExpenses)}
-              onChange={(v) => setMonthlyExpenses(Number(v) || 0)}
-              placeholder="0"
+              value={expensesOverride}
+              onChange={setExpensesOverride}
+              placeholder={String(autoDefaults.avgExpense)}
               type="number"
             />
             <span className="text-[0.65rem] text-nb-fg-muted font-medium">
-              Auto: avg 6 months
+              {autoDefaults.expenseMonthCount > 0
+                ? `Auto: rata-rata ${autoDefaults.expenseMonthCount} bulan penuh (bulan berjalan tidak dihitung)`
+                : 'Auto: belum ada bulan penuh dengan data pengeluaran'}
             </span>
           </div>
 
@@ -566,17 +614,27 @@ export default function FirePage() {
 
           {/* Monthly Savings */}
           <div className="flex flex-col gap-1.5">
-            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">
-              💸 Monthly Savings
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">
+                💸 Monthly Savings
+              </label>
+              {monthlySavingsOverride !== '' && (
+                <button
+                  onClick={() => setMonthlySavingsOverride('')}
+                  className="text-[10px] font-bold text-nb-red border-2 border-nb-red px-2 py-0.5 cursor-pointer hover:bg-nb-red/10 transition-colors uppercase"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
             <NeubruInput
-              value={monthlySavings === 0 ? '' : String(monthlySavings)}
-              onChange={(v) => setMonthlySavings(Number(v) || 0)}
-              placeholder="0"
+              value={monthlySavingsOverride}
+              onChange={setMonthlySavingsOverride}
+              placeholder={String(autoDefaults.avgSavings)}
               type="number"
             />
             <span className="text-[0.65rem] text-nb-fg-muted font-medium">
-              Auto: income - expense avg
+              Auto: income - expense avg (bulan penuh)
             </span>
           </div>
         </div>
@@ -585,16 +643,25 @@ export default function FirePage() {
           <NeubruBtn color="blue" onClick={recalculate}>
             🔄 Recalculate from Data
           </NeubruBtn>
+          <NeubruBtn onClick={resetAssumptions}>
+            ↩️ Reset Asumsi (return / withdrawal)
+          </NeubruBtn>
+        </div>
+        <div className="mt-2 text-[0.65rem] text-nb-fg-muted font-medium">
+          "Recalculate from Data" cuma nyegerin angka yang memang berasal dari data (net worth, rata-rata pengeluaran &amp; tabungan). Asumsi yang kamu set sendiri tidak ikut di-reset.
         </div>
       </NeubruCard>
 
       {/* ── Legend / How it works ── */}
       <div className="mt-5 nb-panel text-xs text-nb-fg-muted leading-relaxed">
         <span className="font-bold uppercase tracking-wide text-nb-fg">FIRE Formula:</span>{' '}
-        FIRE Number = (Monthly Expenses x 12) / Safe Withdrawal Rate.{' '}
-        Years to FI calculated via compound interest with monthly contributions.{' '}
+        FIRE Number = (Monthly Expenses x 12) / Safe Withdrawal Rate, dengan Monthly Expenses =
+        rata-rata bulan penuh yang benar-benar ada datanya (bulan berjalan tidak ikut).{' '}
+        Years to FI calculated via compound interest with monthly contributions, mulai dari net worth
+        live (aset − liability).{' '}
         <span className="font-bold uppercase tracking-wide text-nb-fg">Health Score</span> combines
-        savings rate, liquidity runway, debt ratio, and 6-month net worth trend.
+        savings rate, liquidity runway, debt ratio (dari aset &amp; liability live yang sama), and
+        6-month net worth trend.
       </div>
     </div>
   )

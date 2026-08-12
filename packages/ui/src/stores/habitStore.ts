@@ -4,6 +4,7 @@ import { generateId, isoNow } from '@wos/shared'
 import type { DatabaseAdapter } from '@wos/db'
 import { eq, desc } from '@wos/db'
 import { useAuthStore } from './authStore'
+import { useLevelStore, streakFreezeAllowance } from './levelStore'
 
 interface HabitState {
   adapter: DatabaseAdapter | null
@@ -19,6 +20,10 @@ interface HabitState {
   toggleActive: (id: string, active: boolean) => Promise<void>
   toggleLog: (habitId: string, date: string, done: boolean) => Promise<void>
   getStreak: (habitId: string) => number
+  /** Dates whose miss was bridged by a Vitality streak freeze — rendered as 🧊 in the habit calendar. */
+  getFrozenDates: (habitId: string) => string[]
+  /** This month's streak-freeze budget and how much of it is currently in use across all habits. */
+  getFreezeUsage: () => { available: number; used: number }
   getCompletionRate: (habitId: string, days?: number) => number
 }
 
@@ -59,6 +64,90 @@ function formatHabitLog(row: any): HabitLog {
 }
 
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+
+/**
+ * ── Streak freezes ────────────────────────────────────────────────────────
+ * The Vitality skill tree's one real mechanical effect. `floor(vitality / 3)`
+ * missed days per calendar month can be bridged instead of breaking a streak.
+ *
+ * The budget is shared across habits and allocated deterministically (habits
+ * in stored order, most recent miss first) rather than being spent through a
+ * mutating counter — that way it is derived purely from data the user already
+ * has, can't drift out of sync with the logs, and needs no extra persistence.
+ */
+interface FreezeAllocation {
+  frozen: Map<string, Set<string>>
+  available: number
+  used: number
+}
+
+let freezeCache: { habits: Habit[]; logs: HabitLog[]; allowance: number; month: string; result: FreezeAllocation } | null = null
+
+function computeFreezeAllocation(habits: Habit[], logs: HabitLog[]): FreezeAllocation {
+  const allowance = streakFreezeAllowance(useLevelStore.getState().skills.vitality)
+  const today = dateStr(new Date())
+  const month = today.slice(0, 7)
+
+  if (
+    freezeCache &&
+    freezeCache.habits === habits &&
+    freezeCache.logs === logs &&
+    freezeCache.allowance === allowance &&
+    freezeCache.month === month
+  ) {
+    return freezeCache.result
+  }
+
+  const frozen = new Map<string, Set<string>>()
+  let remaining = allowance
+
+  for (const habit of habits) {
+    const dates = new Set<string>()
+    const current = new Date()
+
+    while (true) {
+      const ds = dateStr(current)
+      if (ds > today) {
+        current.setDate(current.getDate() - 1)
+        continue
+      }
+      const daysBack = Math.floor((new Date().getTime() - current.getTime()) / 86400000)
+      if (daysBack > 90) break
+
+      const dayName = DAY_NAMES[current.getDay()]!
+      if (habit.frequency === 'weekly' && !(habit.targetDays ?? []).includes(dayName)) {
+        current.setDate(current.getDate() - 1)
+        continue
+      }
+
+      const log = logs.find((l) => l.habitId === habit.id && l.date === ds)
+      if (log?.done) {
+        current.setDate(current.getDate() - 1)
+        continue
+      }
+      // Today with no log yet is still pending, not a miss.
+      if (ds === today && !log) {
+        current.setDate(current.getDate() - 1)
+        continue
+      }
+      // A real miss. Only this month's misses are eligible for this month's
+      // budget; anything older simply ends the streak.
+      if (remaining > 0 && ds.slice(0, 7) === month) {
+        dates.add(ds)
+        remaining--
+        current.setDate(current.getDate() - 1)
+        continue
+      }
+      break
+    }
+
+    if (dates.size > 0) frozen.set(habit.id, dates)
+  }
+
+  const result: FreezeAllocation = { frozen, available: allowance, used: allowance - remaining }
+  freezeCache = { habits, logs, allowance, month, result }
+  return result
+}
 
 export const useHabitStore = create<HabitState>((set, get) => ({
   adapter: null,
@@ -206,6 +295,8 @@ export const useHabitStore = create<HabitState>((set, get) => ({
     const habit = habits.find((h) => h.id === habitId)
     if (!habit) return 0
 
+    const frozenDates = computeFreezeAllocation(habits, logs).frozen.get(habitId)
+
     let streak = 0
     const today = dateStr(new Date())
     let current = new Date()
@@ -240,11 +331,28 @@ export const useHabitStore = create<HabitState>((set, get) => ({
           current.setDate(current.getDate() - 1)
           continue
         }
+        // A streak freeze bridges the gap — the streak survives, but the
+        // frozen day itself is not counted as a completed day.
+        if (frozenDates?.has(ds)) {
+          current.setDate(current.getDate() - 1)
+          continue
+        }
         break
       }
     }
 
     return streak
+  },
+
+  getFrozenDates: (habitId) => {
+    const { habits, logs } = get()
+    return [...(computeFreezeAllocation(habits, logs).frozen.get(habitId) ?? [])]
+  },
+
+  getFreezeUsage: () => {
+    const { habits, logs } = get()
+    const { available, used } = computeFreezeAllocation(habits, logs)
+    return { available, used }
   },
 
   getCompletionRate: (habitId, days = 30) => {

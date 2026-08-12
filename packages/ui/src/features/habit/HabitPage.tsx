@@ -53,7 +53,7 @@ export default function HabitPage() {
   const userId = useAuthStore((s) => s.userId)
   const {
     habits, logs, fetchAll, addHabit, editHabit, deleteHabit,
-    toggleActive, toggleLog, getStreak, getCompletionRate,
+    toggleActive, toggleLog, getStreak, getCompletionRate, getFrozenDates, getFreezeUsage,
   } = useHabitStore()
 
   // Modal state
@@ -123,6 +123,8 @@ export default function HabitPage() {
     return Math.max(0, ...habits.map((h) => getStreak(h.id)))
   }, [habits, getStreak])
 
+  const freezeUsage = useMemo(() => getFreezeUsage(), [habits, logs, getFreezeUsage])
+
   // ── Modal handlers ──────────────────────────────────────
 
   const openAdd = () => {
@@ -179,21 +181,42 @@ export default function HabitPage() {
     toast.success('Habit dihapus')
   }
 
-  const handleToggleToday = async (habitId: string) => {
-    const today = todayStr()
-    const log = logs.find((l) => l.habitId === habitId && l.date === today)
-    const newDone = !log?.done
-    await toggleLog(habitId, today, newDone)
-    if (newDone) {
-      useLevelStore.getState().addXP(10)
-      toast.success('⚡ +10 XP')
-      // Confetti for 30-day streak
-      const streak = useHabitStore.getState().getStreak(habitId)
-      if (streak >= 30) {
-        ;(window as any).__wosConfetti?.()
-      }
+  /**
+   * XP is paid at most once per (habit, day), and only for *today*.
+   *
+   * The old version awarded 10 XP on every tick, so check/uncheck/check was
+   * an unlimited XP tap. The guard is the existence of a log row for that
+   * date: once a day has been logged at all, that day is settled and can
+   * never pay out again. Backfilling a past day is deliberately worth 0 XP —
+   * otherwise rapidly filling in a month of history would be the same farm.
+   */
+  const handleToggleDay = async (habitId: string, date: string) => {
+    const existing = logs.find((l) => l.habitId === habitId && l.date === date)
+    const newDone = !existing?.done
+    const firstLogForDay = !existing
+    await toggleLog(habitId, date, newDone)
+
+    if (!newDone) return
+
+    if (date !== todayStr()) {
+      toast.success('✓ Backfill tercatat (tanpa XP)')
+      return
+    }
+    if (!firstLogForDay) {
+      toast.success('✓ Tercatat')
+      return
+    }
+
+    useLevelStore.getState().addXP(10)
+    toast.success('⚡ +10 XP')
+    // Confetti for 30-day streak
+    const streak = useHabitStore.getState().getStreak(habitId)
+    if (streak >= 30) {
+      ;(window as any).__wosConfetti?.()
     }
   }
+
+  const handleToggleToday = (habitId: string) => handleToggleDay(habitId, todayStr())
 
   const toggleDay = (dayValue: string) => {
     setTargetDays((prev) =>
@@ -237,6 +260,15 @@ export default function HabitPage() {
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Streak Terbaik</div>
           <div className="text-nb-orange font-mono text-xl font-extrabold">🔥 {bestStreak} hari</div>
         </NeubruCard>
+        <NeubruCard>
+          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Streak Freeze</div>
+          <div className="font-mono text-xl font-extrabold">
+            🧊 {freezeUsage.available - freezeUsage.used}/{freezeUsage.available}
+          </div>
+          <div className="text-xs text-nb-fg-muted mt-1 font-medium">
+            Dari skill Vitality · reset tiap bulan
+          </div>
+        </NeubruCard>
       </div>
 
       {/* Filter chips */}
@@ -268,6 +300,7 @@ export default function HabitPage() {
             const todayDone = isTodayDone(habit.id)
             const streak = getStreak(habit.id)
             const rate = getCompletionRate(habit.id, 30)
+            const frozenDates = new Set(getFrozenDates(habit.id))
 
             return (
               <div key={habit.id} className="nb-list-item flex-wrap" style={{ opacity: habit.active ? 1 : 0.45 }}>
@@ -308,29 +341,52 @@ export default function HabitPage() {
                   </div>
                 </div>
 
-                {/* Middle: 7-day mini calendar */}
+                {/* Middle: 7-day mini calendar — clickable for catch-up entries */}
                 <div className="flex items-center gap-0.5 mx-2">
                   {last7Days.map((day) => {
                     const log = logs.find((l) => l.habitId === habit.id && l.date === day.dateStr)
                     const isApplicable = habit.frequency === 'daily' || habit.targetDays.includes(day.dayName)
                     const done = log?.done ?? false
+                    const isToday = day.dateStr === today
+                    const isFrozen = frozenDates.has(day.dateStr)
 
                     return (
                       <div key={day.dateStr} className="flex flex-col items-center gap-0.5">
                         <span className="text-[9px] font-bold text-nb-fg-muted leading-none">
-                          {day.label}
+                          {isToday ? '⚡' : day.label}
                         </span>
-                        <div
-                          className="w-4 h-4 border-2 border-nb-border"
+                        <button
+                          type="button"
+                          disabled={!isApplicable}
+                          onClick={() => handleToggleDay(habit.id, day.dateStr)}
+                          className={`w-4 h-4 border-2 border-nb-border p-0 leading-none text-[9px] flex items-center justify-center ${
+                            !isApplicable
+                              ? 'cursor-not-allowed'
+                              : isToday
+                                ? 'cursor-pointer hover:scale-125 transition-transform'
+                                : 'cursor-cell hover:opacity-70 transition-opacity'
+                          }`}
                           style={{
                             backgroundColor: !isApplicable
                               ? '#e0e0e0'
                               : done
                                 ? getColorHex(habit.color)
                                 : 'transparent',
+                            outline: isToday ? '2px solid #0b0b0b' : undefined,
+                            outlineOffset: isToday ? '1px' : undefined,
                           }}
-                          title={`${day.label}: ${!isApplicable ? 'N/A' : done ? 'Done' : 'Not done'}`}
-                        />
+                          title={
+                            !isApplicable
+                              ? `${day.label}: N/A`
+                              : isFrozen
+                                ? `${day.label}: terlewat, ditahan streak freeze 🧊`
+                                : isToday
+                                  ? `Hari ini — ${done ? 'sudah selesai' : 'klik untuk selesai (+10 XP sekali)'}`
+                                  : `${day.label}: ${done ? 'Done' : 'Not done'} — klik untuk catch-up (tanpa XP)`
+                          }
+                        >
+                          {isFrozen ? '🧊' : ''}
+                        </button>
                       </div>
                     )
                   })}

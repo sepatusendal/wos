@@ -3,7 +3,13 @@ import { useAuthStore } from '../../stores/authStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useFinanceStore } from '../../stores/financeStore'
 import { useVaultStore } from '../../stores/vaultStore'
-import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruCheckbox } from '../../components'
+import { useTodoStore } from '../../stores/todoStore'
+import { useNotesStore } from '../../stores/notesStore'
+import { useHabitStore } from '../../stores/habitStore'
+import { useWealthStore } from '../../stores/wealthStore'
+import { useLiabilityStore } from '../../stores/liabilityStore'
+import { useSubscriptionStore } from '../../stores/subscriptionStore'
+import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruCheckbox, NeubruModal } from '../../components'
 import { useRoastStore } from '../../stores/roastStore'
 import { toast } from 'sonner'
 import { exportCSV } from '../../utils/export'
@@ -28,18 +34,25 @@ const LOCALES = [
 ]
 
 const LOCK_OPTIONS = [
-  { value: '5', label: '5 minutes' },
-  { value: '10', label: '10 minutes' },
-  { value: '15', label: '15 minutes' },
-  { value: '30', label: '30 minutes' },
-  { value: '60', label: '1 hour' },
-  { value: '0', label: 'Never' },
+  { value: '5', label: '5 menit' },
+  { value: '10', label: '10 menit' },
+  { value: '15', label: '15 menit' },
+  { value: '30', label: '30 menit' },
+  { value: '60', label: '1 jam' },
+  { value: '0', label: 'Tidak pernah' },
+]
+
+const THEMES: { value: 'light' | 'dark' | 'system'; label: string }[] = [
+  { value: 'light', label: '☀️ Terang' },
+  { value: 'dark', label: '🌙 Gelap' },
+  { value: 'system', label: '💻 Sistem' },
 ]
 
 export default function SettingsPage() {
   const userId = useAuthStore((s) => s.userId)
   const username = useAuthStore((s) => s.username)
   const { settings, loaded, fetchSettings, updateSettings, changePassword } = useSettingsStore()
+  const resolvedTheme = useSettingsStore((s) => s.resolvedTheme)
   const { transactions, fetchAll: fetchFinance } = useFinanceStore()
   const { checkVaultSetup, changeVaultPassword } = useVaultStore()
   const { roastMode, toggleRoast } = useRoastStore()
@@ -56,6 +69,7 @@ export default function SettingsPage() {
   const [vaultNewPw, setVaultNewPw] = useState('')
   const [vaultConfirmPw, setVaultConfirmPw] = useState('')
   const [vaultSaving, setVaultSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => { if (userId) fetchSettings(userId) }, [userId, fetchSettings])
   useEffect(() => { if (userId) fetchFinance(userId) }, [userId, fetchFinance])
@@ -63,24 +77,97 @@ export default function SettingsPage() {
     if (userId) checkVaultSetup(userId).then(({ hasPassword }) => setVaultHasPassword(hasPassword))
   }, [userId, checkVaultSetup])
 
+  // Nothing else in the app applies the resolved theme to the DOM yet, so do it
+  // here. Caveat: this only runs while the Settings page is mounted — a proper
+  // fix belongs at the app root (AppLayout / providers).
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme
+  }, [resolvedTheme])
+
   const update = async (patch: Record<string, any>) => {
     if (!userId) return
     await updateSettings(userId, patch)
-    toast.success('Settings saved')
+    toast.success('Pengaturan disimpan')
+  }
+
+  const handleExportAll = async () => {
+    if (!userId) return
+    setExporting(true)
+    try {
+      // Pull fresh data — the user may never have opened these pages this session
+      await Promise.all([
+        useFinanceStore.getState().fetchAll(userId),
+        useTodoStore.getState().fetchAll(userId),
+        useNotesStore.getState().fetchAll(userId),
+        useHabitStore.getState().fetchAll(userId),
+        useWealthStore.getState().fetchAll(userId),
+        useLiabilityStore.getState().fetchAll(userId),
+        useSubscriptionStore.getState().fetchAll(userId),
+      ])
+
+      const finance = useFinanceStore.getState()
+      const habit = useHabitStore.getState()
+
+      // NOTE: vault entries are deliberately excluded — decrypted passwords must
+      // never end up in a plaintext backup file.
+      const data = {
+        exportedAt: new Date().toISOString(),
+        version: '1.0',
+        app: 'WOS',
+        userId,
+        settings,
+        transactions: finance.transactions,
+        budgets: finance.budgets,
+        accounts: finance.accounts,
+        recurring: finance.recurring,
+        todos: useTodoStore.getState().todos,
+        notes: useNotesStore.getState().notes,
+        habits: habit.habits,
+        habitLogs: habit.logs,
+        assets: useWealthStore.getState().assets,
+        liabilities: useLiabilityStore.getState().liabilities,
+        subscriptions: useSubscriptionStore.getState().subscriptions,
+      }
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `wos-backup-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      toast.success('Semua data berhasil diekspor')
+    } catch {
+      toast.error('Gagal mengekspor data')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const [pendingCurrency, setPendingCurrency] = useState<string | null>(null)
+  const requestCurrencyChange = (v: string) => {
+    if (v === (settings?.currency || 'IDR')) return
+    setPendingCurrency(v)
+  }
+  const confirmCurrencyChange = () => {
+    if (pendingCurrency) update({ currency: pendingCurrency })
+    setPendingCurrency(null)
   }
 
   const handleChangePassword = async () => {
     if (!userId || !currentPw || !newPw) return
-    if (newPw !== confirmPw) { toast.error('Passwords do not match'); return }
-    if (newPw.length < 6) { toast.error('Password must be at least 6 characters'); return }
+    if (newPw !== confirmPw) { toast.error('Password tidak cocok'); return }
+    if (newPw.length < 6) { toast.error('Password minimal 6 karakter'); return }
     setSaving(true)
     const result = await changePassword(userId, currentPw, newPw)
     setSaving(false)
     if (result.ok) {
-      toast.success('Password changed successfully')
+      toast.success('Password berhasil diubah')
       setCurrentPw(''); setNewPw(''); setConfirmPw('')
     } else {
-      toast.error(result.error || 'Failed to change password')
+      toast.error(result.error || 'Gagal mengubah password')
     }
   }
 
@@ -105,18 +192,18 @@ export default function SettingsPage() {
   if (!loaded) {
     return (
       <div className="flex items-center justify-center h-64">
-        <span className="text-lg font-bold uppercase text-nb-fg-muted animate-pulse">Loading settings...</span>
+        <span className="text-lg font-bold uppercase text-nb-fg-muted animate-pulse">Memuat pengaturan...</span>
       </div>
     )
   }
 
   return (
     <div className="max-w-2xl">
-      <h2 className="text-[1.8rem] mb-7">⚙️ Settings</h2>
+      <h2 className="text-[1.8rem] mb-7">⚙️ Pengaturan</h2>
 
       {/* Profile */}
       <div className="mb-7">
-        <h3 className="mb-3">👤 Profile</h3>
+        <h3 className="mb-3">👤 Profil</h3>
         <NeubruCard>
           <div className="flex items-center gap-4 mb-4">
             <div className="w-14 h-14 border-3 border-nb-border bg-nb-yellow flex items-center justify-center text-2xl font-extrabold">
@@ -124,7 +211,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <div className="font-bold text-lg">{username}</div>
-              <div className="text-sm text-nb-fg-muted">Account</div>
+              <div className="text-sm text-nb-fg-muted">Akun</div>
             </div>
           </div>
         </NeubruCard>
@@ -132,24 +219,24 @@ export default function SettingsPage() {
 
       {/* Change Password */}
       <div className="mb-7">
-        <h3 className="mb-3">🔑 Change Password</h3>
+        <h3 className="mb-3">🔑 Ubah Password</h3>
         <NeubruCard>
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Current Password</label>
-              <NeubruInput value={currentPw} onChange={setCurrentPw} type="password" placeholder="Enter current password" />
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Password Saat Ini</label>
+              <NeubruInput value={currentPw} onChange={setCurrentPw} type="password" placeholder="Masukkan password saat ini" />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">New Password</label>
-              <NeubruInput value={newPw} onChange={setNewPw} type="password" placeholder="Enter new password" />
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Password Baru</label>
+              <NeubruInput value={newPw} onChange={setNewPw} type="password" placeholder="Masukkan password baru" />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Confirm New Password</label>
-              <NeubruInput value={confirmPw} onChange={setConfirmPw} type="password" placeholder="Confirm new password" />
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Konfirmasi Password Baru</label>
+              <NeubruInput value={confirmPw} onChange={setConfirmPw} type="password" placeholder="Ulangi password baru" />
             </div>
             <div>
               <NeubruBtn color="blue" onClick={handleChangePassword} disabled={saving}>
-                {saving ? '⏳ Changing...' : '🔑 Change Password'}
+                {saving ? '⏳ Menyimpan...' : '🔑 Ubah Password'}
               </NeubruBtn>
             </div>
           </div>
@@ -206,16 +293,41 @@ export default function SettingsPage() {
         </NeubruCard>
       </div>
 
+      {/* Appearance */}
+      <div className="mb-7">
+        <h3 className="mb-3">🎨 Tampilan</h3>
+        <NeubruCard>
+          <div className="flex flex-col gap-1.5">
+            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Tema</label>
+            <div className="flex gap-2">
+              {THEMES.map((t) => (
+                <NeubruBtn
+                  key={t.value}
+                  size="sm"
+                  color={(settings?.theme ?? 'system') === t.value ? 'green' : undefined}
+                  onClick={() => update({ theme: t.value })}
+                >
+                  {t.label}
+                </NeubruBtn>
+              ))}
+            </div>
+            <div className="text-xs text-nb-fg-muted mt-1">
+              Tema aktif sekarang: <b>{resolvedTheme === 'dark' ? 'Gelap' : 'Terang'}</b>
+            </div>
+          </div>
+        </NeubruCard>
+      </div>
+
       {/* Regional */}
       <div className="mb-7">
         <h3 className="mb-3">🌍 Regional</h3>
         <NeubruCard>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Currency</label>
+              <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Mata Uang</label>
               <NeubruSelect
                 value={settings?.currency || 'IDR'}
-                onChange={(v) => update({ currency: v })}
+                onChange={requestCurrencyChange}
                 options={CURRENCIES}
               />
             </div>
@@ -228,21 +340,38 @@ export default function SettingsPage() {
               />
             </div>
           </div>
+          <p className="text-xs text-nb-fg-muted mt-3">
+            ⚠️ Mengganti currency hanya mengubah <b>tampilan</b> simbol/format angka — nominal transaksi yang sudah tercatat <b>tidak dikonversi</b>. Rp 50.000 akan tetap tersimpan sebagai angka 50.000, cuma simbolnya berubah jadi mata uang baru.
+          </p>
         </NeubruCard>
       </div>
 
+      {pendingCurrency && (
+        <NeubruModal open={!!pendingCurrency} onClose={() => setPendingCurrency(null)} title="Ganti Currency?">
+          <p className="text-sm mb-4">
+            Semua nominal yang sudah tercatat (transaksi, budget, aset, dll) <b>tidak akan dikonversi</b>. Angkanya tetap sama persis, cuma simbol mata uangnya yang berubah.
+            <br /><br />
+            Contoh: transaksi yang sekarang tertulis <b>Rp 50.000</b> akan tampil sebagai <b>{pendingCurrency} 50.000</b> — bukan hasil konversi kurs, murni ganti label.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <NeubruBtn color="orange" onClick={() => setPendingCurrency(null)}>Batal</NeubruBtn>
+            <NeubruBtn color="green" onClick={confirmCurrencyChange}>Lanjut Ganti</NeubruBtn>
+          </div>
+        </NeubruModal>
+      )}
+
       {/* Security */}
       <div className="mb-7">
-        <h3 className="mb-3">🔒 Security</h3>
+        <h3 className="mb-3">🔒 Keamanan</h3>
         <NeubruCard>
           <div className="flex flex-col gap-1.5">
-            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Auto-Lock Timeout</label>
+            <label className="font-bold text-xs uppercase tracking-wider text-nb-fg-muted">Waktu Auto-Lock</label>
             <NeubruSelect
               value={String(settings?.autoLockMinutes ?? 10)}
               onChange={(v) => update({ autoLockMinutes: Number(v) })}
               options={LOCK_OPTIONS}
             />
-            <div className="text-xs text-nb-fg-muted mt-1">Lock the vault automatically after inactivity</div>
+            <div className="text-xs text-nb-fg-muted mt-1">Kunci vault otomatis setelah tidak ada aktivitas</div>
           </div>
         </NeubruCard>
       </div>
@@ -254,16 +383,16 @@ export default function SettingsPage() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-bold text-sm">Export Transactions (CSV)</div>
-                <div className="text-xs text-nb-fg-muted">{transactions.length} transactions</div>
+                <div className="font-bold text-sm">Export Transaksi (CSV)</div>
+                <div className="text-xs text-nb-fg-muted">{transactions.length} transaksi</div>
               </div>
               <NeubruBtn size="sm" color="green" onClick={() => exportCSV(transactions)}>📥 CSV</NeubruBtn>
             </div>
             <div className="h-px bg-nb-border" />
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-bold text-sm">Export Transactions (PDF)</div>
-                <div className="text-xs text-nb-fg-muted">Full report with summary</div>
+                <div className="font-bold text-sm">Export Transaksi (PDF)</div>
+                <div className="text-xs text-nb-fg-muted">Laporan lengkap dengan ringkasan</div>
               </div>
               <NeubruBtn size="sm" color="blue" disabled={pdfLoading} onClick={async () => {
                 setPdfLoading(true)
@@ -284,6 +413,19 @@ export default function SettingsPage() {
                 }
               }}>
                 {pdfLoading ? '⏳...' : '📥 PDF'}
+              </NeubruBtn>
+            </div>
+            <div className="h-px bg-nb-border" />
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-bold text-sm">Export Semua Data (JSON)</div>
+                <div className="text-xs text-nb-fg-muted">
+                  Transaksi, budget, akun, todo, notes, habit, aset, utang, subscription.
+                  Password vault <b>tidak</b> ikut diekspor.
+                </div>
+              </div>
+              <NeubruBtn size="sm" color="purple" disabled={exporting} onClick={handleExportAll}>
+                {exporting ? '⏳...' : '📦 JSON'}
               </NeubruBtn>
             </div>
           </div>
@@ -308,12 +450,12 @@ export default function SettingsPage() {
 
       {/* About */}
       <div className="mb-7">
-        <h3 className="mb-3">ℹ️ About</h3>
+        <h3 className="mb-3">ℹ️ Tentang</h3>
         <NeubruCard>
           <div className="flex flex-col gap-2 text-sm">
-            <div className="flex justify-between"><span className="text-nb-fg-muted">App</span><span className="font-bold">WOS Finance</span></div>
-            <div className="flex justify-between"><span className="text-nb-fg-muted">Version</span><span className="font-bold">0.1.0</span></div>
-            <div className="flex justify-between"><span className="text-nb-fg-muted">Transactions</span><span className="font-bold">{transactions.length}</span></div>
+            <div className="flex justify-between"><span className="text-nb-fg-muted">Aplikasi</span><span className="font-bold">WOS Finance</span></div>
+            <div className="flex justify-between"><span className="text-nb-fg-muted">Versi</span><span className="font-bold">0.1.0</span></div>
+            <div className="flex justify-between"><span className="text-nb-fg-muted">Transaksi</span><span className="font-bold">{transactions.length}</span></div>
           </div>
         </NeubruCard>
       </div>

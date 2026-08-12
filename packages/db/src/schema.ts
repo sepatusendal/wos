@@ -28,6 +28,12 @@ export const budgets = sqliteTable('budgets', {
   userId: text('user_id').notNull().references(() => users.id),
   category: text('category').notNull(),
   limit: real('limit').notNull(),
+  // Rollover only applies from the month a budget was actually created —
+  // otherwise a budget made today would retroactively "inherit" last
+  // month's unused amount from before it ever existed. Opt-in per budget,
+  // since most users expect a flat monthly limit, not an envelope.
+  createdAt: text('created_at').notNull().default(''),
+  rolloverEnabled: integer('rollover_enabled', { mode: 'boolean' }).notNull().default(false),
 })
 
 export const assets = sqliteTable('assets', {
@@ -39,8 +45,19 @@ export const assets = sqliteTable('assets', {
   unitPrice: real('unit_price').notNull(),
   buyPrice: real('buy_price'),
   buyDate: text('buy_date'),
+  ticker: text('ticker'),
   notes: text('notes').notNull().default(''),
   lastUpdated: text('last_updated').notNull(),
+  createdAt: text('created_at').notNull(),
+})
+
+export const liabilities = sqliteTable('liabilities', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  name: text('name').notNull(),
+  type: text('type', { enum: ['mortgage', 'loan', 'credit_card', 'other'] }).notNull(),
+  amount: real('amount').notNull(),
+  notes: text('notes').notNull().default(''),
   createdAt: text('created_at').notNull(),
 })
 
@@ -110,6 +127,7 @@ export const savingsGoals = sqliteTable('savings_goals', {
   name: text('name').notNull(),
   targetAmount: real('target_amount').notNull(),
   savedAmount: real('saved_amount').notNull().default(0),
+  accountId: text('account_id'),
   deadline: text('deadline'),
   createdAt: text('created_at').notNull(),
 })
