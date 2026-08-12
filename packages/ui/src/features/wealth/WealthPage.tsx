@@ -147,11 +147,17 @@ export default function WealthPage() {
   }
 
   const handleRefreshPrices = async () => {
+    // A fixed id makes repeated clicks (e.g. an impatient double-click, or
+    // the button staying enabled while there's nothing to refresh) replace
+    // the existing toast instead of stacking a new one on top of it —
+    // sonner has no built-in de-dupe, so without this every click adds
+    // another toast that never expires until dismissed.
     const hasTickers = assets.some((a) => a.ticker && (a.type === 'stock' || a.type === 'crypto'))
-    if (!hasTickers) { toast.info('Tidak ada aset dengan ticker — isi field Ticker di aset saham/crypto untuk pakai harga live'); return }
+    if (!hasTickers) { toast.info('Tidak ada aset dengan ticker — isi field Ticker di aset saham/crypto untuk pakai harga live', { id: 'wealth-refresh-prices' }); return }
+    if (refreshingPrices) return
     const { updated, failed } = await refreshPrices()
-    if (updated > 0) toast.success(`${updated} harga aset diperbarui${failed > 0 ? `, ${failed} gagal` : ''}`)
-    else toast.error('Gagal mengambil harga terbaru')
+    if (updated > 0) toast.success(`${updated} harga aset diperbarui${failed > 0 ? `, ${failed} gagal` : ''}`, { id: 'wealth-refresh-prices' })
+    else toast.error('Gagal mengambil harga terbaru', { id: 'wealth-refresh-prices' })
   }
 
   return (
