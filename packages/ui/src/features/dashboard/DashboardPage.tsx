@@ -226,11 +226,9 @@ export default function DashboardPage() {
             +{formatCurrency(monthIncome)} · -{formatCurrency(monthExpense)}
             {changeBadge(dateFilter === 'month' ? pctChange(monthNet, prevIncome - prevExpense) : null)}
           </div>
-        </NeubruCard>
-        <NeubruCard>
-          <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Saldo Akun</div>
-          <div className={`font-mono text-xl font-extrabold ${accountTotal >= 0 ? 'text-nb-green' : 'text-nb-red'}`}>{formatCurrency(accountTotal)}</div>
-          <div className="text-xs text-nb-fg-muted mt-1 font-medium">{accounts.length} akun · saldo riil</div>
+          <div className="text-xs text-nb-fg-muted mt-1.5 pt-1.5 border-t border-nb-border/40 font-medium">
+            Saldo akun: <span className={`font-mono font-bold ${accountTotal >= 0 ? 'text-nb-green' : 'text-nb-red'}`}>{formatCurrency(accountTotal)}</span> · {accounts.length} akun
+          </div>
         </NeubruCard>
         <NeubruCard>
           <div className="text-xs font-bold uppercase tracking-[0.08em] text-nb-fg-muted mb-1.5">Income</div>
@@ -276,6 +274,13 @@ export default function DashboardPage() {
             )}
           </div>
         </NeubruCard>
+      </div>
+
+      <div className="grid grid-cols-2 gap-5 mb-7">
+        <NeubruCard className="!p-0 overflow-hidden">
+          <FinancialPet />
+        </NeubruCard>
+        <OnThisDay />
       </div>
 
       <div className="grid grid-cols-2 gap-5 mb-7">
@@ -375,14 +380,6 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           )}
         </NeubruCard>
-      </div>
-
-      {/* Fun widgets sit below the financial substance of the page */}
-      <div className="grid grid-cols-2 gap-5 mb-7">
-        <NeubruCard className="!p-0 overflow-hidden">
-          <FinancialPet />
-        </NeubruCard>
-        <OnThisDay />
       </div>
 
       <div className="grid grid-cols-2 gap-5 mb-7">

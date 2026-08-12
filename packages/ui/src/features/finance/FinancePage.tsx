@@ -204,12 +204,6 @@ export default function FinancePage() {
 
   const activeFilterCount = [searchQuery, filterAccount, filterCategory, monthFilter].filter(Boolean).length + (filter !== 'all' ? 1 : 0)
 
-  const roastText = useMemo(() => {
-    if (!roastMode) return ''
-    return generateRoast(transactions, budgetVsActual)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roastMode, transactions, budgets, generateRoast])
-
   // ── Budget vs Actual: monthly rollover + overspend suggestions ──
   const budgetVsActual = useMemo(() => {
     const now = new Date()
@@ -266,6 +260,12 @@ export default function FinancePage() {
       }
     })
   }, [budgets, transactions, budgetRollover])
+
+  const roastText = useMemo(() => {
+    if (!roastMode) return ''
+    return generateRoast(transactions, budgetVsActual)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roastMode, transactions, budgets, generateRoast])
 
   const openAdd = () => { setEditId(null); setType('expense'); setAmount(''); setCategory('Makan'); setDesc(''); setDate(todayStr()); setTxAccountId(''); setFlexibility('flexible'); setShowTxModal(true) }
   const openEdit = (t: any) => { setEditId(t.id); setType(t.type); setAmount(String(t.amount)); setCategory(t.category); setDesc(t.description); setDate(t.date); setTxAccountId(t.accountId ?? ''); setFlexibility((t.flexibility ?? 'flexible') as 'fixed' | 'flexible' | 'discretionary'); setShowTxModal(true) }
