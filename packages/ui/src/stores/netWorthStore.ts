@@ -8,6 +8,7 @@ interface NetWorthState {
   adapter: DatabaseAdapter | null
   entries: NetWorthEntry[]
   loading: boolean
+  snapshotting: boolean
   setAdapter: (adapter: DatabaseAdapter) => void
   fetchAll: (userId: string) => Promise<void>
   addEntry: (userId: string, e: Omit<NetWorthEntry, 'id' | 'createdAt'>) => Promise<void>
@@ -27,6 +28,7 @@ export const useNetWorthStore = create<NetWorthState>((set, get) => ({
   adapter: null,
   entries: [],
   loading: false,
+  snapshotting: false,
 
   setAdapter: (adapter) => set({ adapter }),
 
@@ -62,10 +64,20 @@ export const useNetWorthStore = create<NetWorthState>((set, get) => ({
   },
 
   ensureTodaySnapshot: async (userId, breakdown) => {
-    const { entries } = get()
+    const { entries, snapshotting } = get()
     const today = todayStr()
     if (entries.some((e) => e.date === today)) return
-    await get().addEntry(userId, { ...breakdown, date: today })
+    // Callers re-fire on every assets/liabilities change (e.g. each price
+    // update during a multi-asset refresh) — without this guard, several
+    // calls can all pass the check above before the first insert's
+    // fetchAll() lands, writing duplicate rows for the same day.
+    if (snapshotting) return
+    set({ snapshotting: true })
+    try {
+      await get().addEntry(userId, { ...breakdown, date: today })
+    } finally {
+      set({ snapshotting: false })
+    }
   },
 }))
 
