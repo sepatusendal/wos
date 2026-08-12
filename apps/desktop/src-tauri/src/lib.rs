@@ -4,6 +4,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
             eprintln!("Fatal: gagal menjalankan WOS: {}", e);

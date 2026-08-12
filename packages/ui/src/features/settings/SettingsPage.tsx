@@ -11,6 +11,7 @@ import { useLiabilityStore } from '../../stores/liabilityStore'
 import { useSubscriptionStore } from '../../stores/subscriptionStore'
 import { NeubruBtn, NeubruCard, NeubruInput, NeubruSelect, NeubruCheckbox, NeubruModal } from '../../components'
 import { useRoastStore } from '../../stores/roastStore'
+import { useUpdaterStore } from '../../stores/updaterStore'
 import { toast } from 'sonner'
 import { exportCSV } from '../../utils/export'
 
@@ -56,6 +57,7 @@ export default function SettingsPage() {
   const { transactions, fetchAll: fetchFinance } = useFinanceStore()
   const { checkVaultSetup, changeVaultPassword } = useVaultStore()
   const { roastMode, toggleRoast } = useRoastStore()
+  const updater = useUpdaterStore()
 
   const [currentPw, setCurrentPw] = useState('')
   const [newPw, setNewPw] = useState('')
@@ -454,9 +456,50 @@ export default function SettingsPage() {
         <NeubruCard>
           <div className="flex flex-col gap-2 text-sm">
             <div className="flex justify-between"><span className="text-nb-fg-muted">Aplikasi</span><span className="font-bold">WOS Finance</span></div>
-            <div className="flex justify-between"><span className="text-nb-fg-muted">Versi</span><span className="font-bold">0.1.0</span></div>
+            <div className="flex justify-between"><span className="text-nb-fg-muted">Versi</span><span className="font-bold">{updater.currentVersion ?? '0.1.0'}</span></div>
             <div className="flex justify-between"><span className="text-nb-fg-muted">Transaksi</span><span className="font-bold">{transactions.length}</span></div>
           </div>
+
+          {updater.supported && (
+            <div className="mt-4 pt-4 border-t-2 border-nb-border">
+              {updater.status === 'idle' || updater.status === 'error' ? (
+                <div className="flex items-center justify-between gap-3">
+                  {updater.status === 'error' && (
+                    <span className="text-xs text-nb-red font-medium">{updater.error}</span>
+                  )}
+                  <NeubruBtn size="sm" onClick={() => updater.checkForUpdates()} className="ml-auto">
+                    🔄 Cek Update
+                  </NeubruBtn>
+                </div>
+              ) : updater.status === 'checking' ? (
+                <div className="text-xs text-nb-fg-muted font-medium">Mengecek update...</div>
+              ) : updater.status === 'up-to-date' ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-nb-green font-bold">✓ Sudah versi terbaru</span>
+                  <NeubruBtn size="sm" onClick={() => updater.checkForUpdates()}>🔄 Cek Lagi</NeubruBtn>
+                </div>
+              ) : updater.status === 'available' ? (
+                <div className="flex flex-col gap-2">
+                  <div className="text-xs font-bold">
+                    🎉 Update tersedia: v{updater.update?.version}
+                  </div>
+                  {updater.update?.notes && (
+                    <p className="text-xs text-nb-fg-muted whitespace-pre-wrap">{updater.update.notes}</p>
+                  )}
+                  <NeubruBtn size="sm" onClick={() => updater.installUpdate()}>⬇️ Download & Install</NeubruBtn>
+                </div>
+              ) : updater.status === 'downloading' ? (
+                <div className="flex flex-col gap-2">
+                  <div className="text-xs font-bold">Mengunduh update... {updater.progress}%</div>
+                  <div className="h-2 bg-nb-bg border-2 border-nb-border overflow-hidden">
+                    <div className="h-full bg-nb-blue transition-all duration-300" style={{ width: `${updater.progress}%` }} />
+                  </div>
+                </div>
+              ) : updater.status === 'ready' ? (
+                <div className="text-xs text-nb-green font-bold">✓ Terinstall, restart aplikasi...</div>
+              ) : null}
+            </div>
+          )}
         </NeubruCard>
       </div>
     </div>

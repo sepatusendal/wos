@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useLiabilityStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore } from '@wos/ui'
+import { AppLayout, LoginPage, LoadingSpinner, useAuthStore, useFinanceStore, useWealthStore, useLiabilityStore, useNetWorthStore, useVaultStore, useTodoStore, useSettingsStore, useSubscriptionStore, useHabitStore, useAchievementStore, useNotesStore, useUpdaterStore } from '@wos/ui'
 import Database from '@tauri-apps/plugin-sql'
 import { createTauriSqlAdapter } from '@wos/db'
 import { getCurrentWindow, availableMonitors } from '@tauri-apps/api/window'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
+import { getVersion } from '@tauri-apps/api/app'
+import { check } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 
 // ── Window State Persistence ──────────────────────────────
 // Fixes #4: macOS window doesn't remember position/size between sessions
@@ -132,6 +135,36 @@ export default function App() {
       setWindowReady(true)
       // Always show, even if restore failed — never leave an invisible window
       void showWindow()
+    })
+  }, [])
+
+  // Wire up the shared updater store with real Tauri updater calls — the web
+  // build has no such implementation, so it never sees the update UI.
+  useEffect(() => {
+    useUpdaterStore.getState().registerImpl({
+      getCurrentVersion: () => getVersion(),
+      check: async () => {
+        const result = await check()
+        if (!result) return null
+        return { version: result.version, notes: result.body ?? null }
+      },
+      downloadAndInstall: async (onProgress) => {
+        const result = await check()
+        if (!result) throw new Error('Update tidak ditemukan')
+        let downloaded = 0
+        let total = 0
+        await result.downloadAndInstall((event) => {
+          if (event.event === 'Started') {
+            total = event.data.contentLength ?? 0
+          } else if (event.event === 'Progress') {
+            downloaded += event.data.chunkLength
+            if (total > 0) onProgress(Math.min(100, Math.round((downloaded / total) * 100)))
+          } else if (event.event === 'Finished') {
+            onProgress(100)
+          }
+        })
+      },
+      relaunch: () => relaunch(),
     })
   }, [])
 
