@@ -46,16 +46,11 @@ interface Props {
 }
 
 export default function LoadingSpinner({ text, className = '' }: Props) {
-  const [phrase, setPhrase] = useState('')
+  const [phrase, setPhrase] = useState(() => PHRASES[Math.floor(Math.random() * PHRASES.length)] ?? 'Loading...')
   const [exit, setExit] = useState(false)
   const swapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    const pickRandom = () => {
-      const pool = PHRASES.filter((p) => p !== phrase || PHRASES.length === 1)
-      setPhrase(pool[Math.floor(Math.random() * pool.length)] ?? PHRASES[0] ?? 'Loading...')
-    }
-    pickRandom()
     const interval = setInterval(() => {
       setExit(true)
       swapTimerRef.current = setTimeout(() => {
